@@ -1,0 +1,46 @@
+# ⛔ Fichiers compilés Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 📦 Environnements virtuels
+venv/
+env/
+.venv/
+.env/
+
+
+# 🔐 Fichiers d'environnement
+*.env
+
+# 📁 Fichiers de logs
+*.log
+
+# 🗃️ Base de données SQLite (si utilisée)
+*.sqlite3
+
+# 📂 Répertoires d’IDE
+.vscode/
+.idea/
+
+# 🧪 Fichiers de test et couverture
+htmlcov/
+.tox/
+.coverage
+.pytest_cache/
+
+# 📁 Build/Distribution
+build/
+dist/
+*.egg-info/
+
+# 🐘 Jupyter
+.ipynb_checkpoints/
+
+# 🌐 Django (si utilisé)
+staticfiles/
+media/
+
+# 💡 Autres fichiers temporaires
+.DS_Store
+Thumbs.db
