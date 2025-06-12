@@ -28,6 +28,7 @@ services:
       - ./nginx/api-rag.onexus.tech.conf:/etc/nginx/sites-available/api-rag.onexus.tech.conf
       - ./ssl:/etc/nginx/ssl
       - ./logs/nginx:/var/log/nginx
+      - /var/www/certbot:/var/www/certbot
     networks:
       - rag-network
     depends_on:
