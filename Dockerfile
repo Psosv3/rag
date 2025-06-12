@@ -14,8 +14,8 @@ RUN apt-get update && apt-get install -y \
 # Copier les fichiers de requirements
 COPY requirements.txt .
 
-# Installer les dépendances Python
-RUN pip install --no-cache-dir numpy && \
+# Installer les dépendances Python avec une version spécifique de numpy
+RUN pip install --no-cache-dir "numpy<2.0.0" && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copier le code de l'application
