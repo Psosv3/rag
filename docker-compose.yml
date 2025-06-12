@@ -13,8 +13,6 @@ services:
       - ./logs:/app/logs
     networks:
       - rag-network
-    depends_on:
-      - nginx
 
   nginx:
     image: nginx:alpine
@@ -31,8 +29,6 @@ services:
       - /var/www/certbot:/var/www/certbot
     networks:
       - rag-network
-    depends_on:
-      - rag-api
 
 networks:
   rag-network:
