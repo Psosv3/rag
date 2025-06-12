@@ -17,6 +17,9 @@ COPY requirements.txt .
 # Installer les dépendances Python
 RUN pip install --no-cache-dir -r requirements.txt
 
+RUN python -c "import numpy; print('Numpy version:', numpy.__version__)"
+
+
 # Copier le code de l'application
 COPY . .
 
