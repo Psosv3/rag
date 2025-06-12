@@ -11,6 +11,8 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+    ports:
+    - "18000:8000"  # ✅ expose API sur http://localhost:18000 pour debug local
     networks:
       - rag-network
 
