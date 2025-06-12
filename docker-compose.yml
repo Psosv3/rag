@@ -19,8 +19,8 @@ services:
     container_name: rag-nginx
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "8080:80"
+      - "8443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
       - ./nginx/api-rag.onexus.tech.conf:/etc/nginx/sites-available/api-rag.onexus.tech.conf
