@@ -1,8 +1,9 @@
 import os
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from rag_utils import build_index, get_answer
 from dotenv import load_dotenv
+import models
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -27,32 +28,34 @@ vectordb = None
 build_index(DATA_DIR, HTTPException)
 
 @app.post("/upload/")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...),
+                      data_dir = DATA_DIR,
+                      background_tasks: BackgroundTasks = None):
+    
     """Endpoint pour uploader un fichier PDF ou DOCX."""
     if not file.filename.endswith(('.pdf', '.docx')):
         raise HTTPException(status_code=400, detail="Seuls les fichiers PDF et DOCX sont acceptés")
     
-    file_path = os.path.join(DATA_DIR, file.filename)
+    file_path = os.path.join(data_dir, file.filename)
     try:
         with open(file_path, "wb") as f:
             content = await file.read()
             f.write(content)
+        
+        background_tasks.add_task(build_index, DATA_DIR, HTTPException)
+
         return {"message": f"Fichier {file.filename} uploadé avec succès"}
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'upload: {str(e)}")
 
 @app.post("/build_index/")
-async def build_index(DATA_DIR, HTTPException):
-    
+async def express_build_index(DATA_DIR, HTTPException):
     build_index(DATA_DIR, HTTPException)
-
     return {"message": "Index construit avec succès"}
 
 @app.post("/ask/")
-async def ask_question(
-    question: str = Form(...),
-    openai_api_key: str = Form(...)
-):
+async def ask_question(question: str = Form(...)):
     """Endpoint pour poser une question."""
     global vectordb
     if vectordb is None:
@@ -62,8 +65,8 @@ async def ask_question(
         )
     
     try:
-        answer = get_answer(question, vectordb, openai_api_key)
-        return {"answer": answer}
+        answer = get_answer(question, vectordb.as_retriever(), models.mistral_llm)
+        return {"answer": answer["answer"]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la génération de la réponse: {str(e)}")
 

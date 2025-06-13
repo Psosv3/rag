@@ -88,7 +88,8 @@ def create_vectorstore(docs: List[str],
                        persist_dir: Optional[str | Path] = None,
                        show_progress: bool = True,
                        ) -> FAISS:
-    """Create and optionally persist a FAISS vector index from document
+    """
+    Create and optionally persist a FAISS vector index from document
     strings using OpenAI text-embedding-3-large.
 
     Args:
