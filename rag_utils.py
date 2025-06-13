@@ -107,8 +107,6 @@ def create_vectorstore(docs: List[str],
     if not docs or all(not d.strip() for d in docs):
         raise ValueError("No non-empty documents provided.")
 
-    os.environ["OPENAI_API_KEY"] = openai_api_key.strip()
-
     # ------------------------------------------------------ smart chunking
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=splitter_chunk_size,
