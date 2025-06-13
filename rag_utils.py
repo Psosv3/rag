@@ -27,9 +27,8 @@ from langchain_community.docstore.in_memory import InMemoryDocstore
 from mistralai import Mistral
 
 embedding_model = "mistral-embed"
-mistral_api_key = "MMgzK02HosimPpErmKqWrEC1xbGSIAuC"
 
-client = Mistral(api_key=mistral_api_key)
+client = Mistral(api_key = models.mistral_api_key)
 #---------------------------------
 
 # Charger les variables d'environnement
