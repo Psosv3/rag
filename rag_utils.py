@@ -68,7 +68,6 @@ def load_documents(data_dir):
 
 
 def create_vectorstore(docs: List[str],
-                       openai_api_key: str = models.openai_key,
                        *,
                        model: str = "text-embedding-3-large",
                        splitter_chunk_size: int = 800,
