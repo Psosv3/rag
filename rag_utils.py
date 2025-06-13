@@ -8,6 +8,37 @@ from PyPDF2 import PdfReader
 import docx
 from dotenv import load_dotenv
 
+import os
+from typing import Optional, Union, List, Dict
+from langchain.prompts import PromptTemplate
+from langchain.chains import RetrievalQA
+from langchain.schema import BaseRetriever, Document
+from langchain.base_language import BaseLanguageModel
+
+#from __future__ import annotations
+
+import os
+import uuid
+from pathlib import Path
+from typing import List, Optional
+
+import faiss                    # Facebook AI Similarity Search
+import numpy as np
+from tqdm.auto import tqdm
+
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
+from langchain_community.docstore.in_memory import InMemoryDocstore
+
+#---------------------------------
+from mistralai import Mistral
+
+embedding_model = "mistral-embed"
+mistral_api_key = "MMgzK02HosimPpErmKqWrEC1xbGSIAuC"
+
+client = Mistral(api_key=mistral_api_key)
+#---------------------------------
+
 # Charger les variables d'environnement
 load_dotenv()
 
@@ -43,67 +74,214 @@ def load_documents(data_dir):
             docs.append(read_docx(fpath))
     return docs
 
-def create_vectorstore(docs, openai_api_key):
-    """Crée un index vectoriel à partir des documents."""
-    if not docs:
-        raise ValueError("Aucun document trouvé à indexer")
-    
-    splitter = CharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=100,
-        separator="\n"
-    )
-    
-    texts = []
-    for doc in docs:
-        if doc.strip():  # Ignorer les documents vides
-            texts.extend(splitter.split_text(doc))
-    
-    if not texts:
-        raise ValueError("Aucun texte à indexer après le découpage")
-    
-    # Configuration mise à jour des embeddings
-    # embeddings = OpenAIEmbeddings(
-    #     api_key=openai_api_key,
-    #     model="text-embedding-ada-002"
-    # )
-    os.environ["OPENAI_API_KEY"] = openai_api_key
-    embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
 
-    vectordb = FAISS.from_texts(texts, embeddings)
+def create_vectorstore(docs: List[str],
+                       openai_api_key: str = "REMOVED",
+                       *,
+                       model: str = "text-embedding-3-large",
+                       splitter_chunk_size: int = 800,
+                       splitter_overlap: int = 100,
+                       embed_batch_size: int = 128,
+                       use_hnsw: bool = True,
+                       hnsw_m: int = 32,
+                       normalise: bool = True,
+                       persist_dir: Optional[str | Path] = None,
+                       show_progress: bool = True,
+                       ) -> FAISS:
+    """Create and optionally persist a FAISS vector index from document
+    strings using OpenAI text-embedding-3-large.
+
+    Args:
+        docs (list[str]): Raw document strings.
+        openai_api_key (str): OpenAI key with embedding access.
+        model (str, optional): Embedding model name. Defaults to
+            "text-embedding-3-large".
+        splitter_chunk_size (int, optional): Target chunk length in chars.
+        splitter_overlap (int, optional): Overlap between chunks in chars.
+        embed_batch_size (int, optional): Max chunks per embedding request.
+        use_hnsw (bool, optional): If True, build an HNSW index; otherwise
+            a flat IP index.
+        hnsw_m (int, optional): HNSW connectivity factor.
+        normalise (bool, optional): L2-normalise vectors before indexing.
+        persist_dir (str | Path, optional): Directory to save
+            `index.faiss`/`index.pkl`. In-memory if None.
+        show_progress (bool, optional): Display TQDM progress bars.
+
+    Returns:
+        langchain_community.vectorstores.FAISS: Ready-to-query vector store.
+    """
+    # -------------------------------------------------------------- sanity
+    if not docs or all(not d.strip() for d in docs):
+        raise ValueError("No non-empty documents provided.")
+
+    os.environ["OPENAI_API_KEY"] = openai_api_key.strip()
+
+    # ------------------------------------------------------ smart chunking
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=splitter_chunk_size,
+        chunk_overlap=splitter_overlap,
+        separators=["\n\n", "\n", ".", " ", ""],  # paragraph → sentence → …
+    )
+
+    documents: List[Document] = []
+    for src_id, raw in enumerate(docs):
+        if not raw.strip():
+            continue
+        for chunk_id, chunk in enumerate(splitter.split_text(raw)):
+            meta = {"source_id": src_id, "chunk_id": chunk_id}
+            documents.append(Document(page_content=chunk, metadata=meta))
+
+    if not documents:
+        raise ValueError("Everything was filtered out during chunking.")
+
+    # ------------------------------------------------------ embed in batches
+    embedder = OpenAIEmbeddings(
+        model=model,
+        chunk_size=embed_batch_size,     # batch size :contentReference[oaicite:2]{index=2}
+        show_progress_bar=show_progress,
+        max_retries=6,                   # exponential back-off built-in
+    )
+
+    texts = [d.page_content for d in documents]
+    vectors = embedder.embed_documents(texts)        # auto-batched
+
+    # ------------------------------------------------------ vector prep
+    vecs_np = np.asarray(vectors, dtype="float32")
+    if normalise:
+        faiss.normalize_L2(vecs_np)
+
+    dimension = vecs_np.shape[1]
+
+    # ------------------------------------------------------ index factory
+    if use_hnsw:
+        index = faiss.IndexHNSWFlat(dimension, hnsw_m)
+        # tune search/construct parameters for better recall vs. latency
+        index.hnsw.efConstruction = max(64, hnsw_m * 4)
+        index.hnsw.efSearch = 128
+    else:
+        # Exact search (Inner Product) - accurate but slower and RAM-heavy
+        index = faiss.IndexFlatIP(dimension)
+
+    index.add(vecs_np)                                # populate index
+
+    # ------------------------------------------------------ wrap with LangChain
+    ids = [str(uuid.uuid4()) for _ in documents]
+    docstore = InMemoryDocstore(dict(zip(ids, documents)))
+    index_to_docstore_id = {i: doc_id for i, doc_id in enumerate(ids)}
+
+    vectordb = FAISS(
+        embedding_function=embedder,
+        index=index,
+        docstore=docstore,
+        index_to_docstore_id=index_to_docstore_id,
+    )
+
+    # ------------------------------------------------------ optional save
+    if persist_dir:
+        Path(persist_dir).mkdir(parents=True, exist_ok=True)
+        vectordb.save_local(str(persist_dir))          # persists index & meta :contentReference[oaicite:3]{index=3}
+
     return vectordb
 
-def get_answer(question, vectordb, openai_api_key):
-    """Récupère la réponse à une question en utilisant le RAG."""
-    if not question.strip():
-        return "Veuillez poser une question valide."
-    
-    try:
-        # Recherche des documents pertinents
-        docs = vectordb.similarity_search(question, k=3)
-        context = "\n".join([d.page_content for d in docs])
-        
-        # Création de la réponse avec OpenAI
-        from langchain_openai import OpenAI
-        # llm = OpenAI(
-        #     openai_api_key=openai_api_key,
-        #     model_name="gpt-3.5-turbo-instruct",
-        #     temperature=0.7
-        # )
-        os.environ["OPENAI_API_KEY"] = openai_api_key
-        llm = OpenAI(model="gpt-3.5-turbo-instruct", temperature=0.7)
 
+def build_index(data_dir, HTTPException):
+    """Endpoint pour construire l'index à partir des documents."""
+
+    try:
+        docs = load_documents(data_dir)
+        if not docs:
+            raise HTTPException(status_code=400, detail="Aucun document trouvé dans le dossier data")
         
-        prompt = f"""Réponds à la question en te basant uniquement sur le contexte suivant.
-        Si la réponse n'est pas dans le contexte, dis-le clairement.
-        
-        Contexte:
-        {context}
-        
-        Question: {question}
-        
-        Réponse:"""
-        
-        return llm(prompt)
+        vectordb = create_vectorstore(docs)
+
+        return vectordb
     except Exception as e:
-        return f"Une erreur s'est produite: {str(e)}" 
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la construction de l'index: {str(e)}")
+
+
+
+def get_answer(question: str,
+               retriever: BaseRetriever,
+               llm: BaseLanguageModel,
+               *,
+               k: int = 3,
+               chain_type: str = "refine", # or "stuff", "map_reduce", "refine"…
+               temperature: float = 0.0,
+               max_tokens: int = 512,
+               return_sources: bool = True,
+               ) -> Union[str, Dict[str, Union[str, List[Document]]]]:
+    """
+    Retrieve an answer to a question via a RAG pipeline.
+
+    Retrieves the top-k most relevant passages using the provided retriever,
+    then generates a response with the specified LLM. Optionally returns source
+    documents alongside the answer.
+
+    Args:
+        question (str): The question to answer.
+        retriever (BaseRetriever): The retriever for document lookup.
+        llm (BaseLanguageModel): The language model for generation.
+        k (int, optional): Number of passages to retrieve. Defaults to 3.
+        chain_type (str, optional): RetrievalQA chain type ("stuff", 
+            "map_reduce", "refine"). Defaults to "stuff".
+        temperature (float, optional): Sampling temperature for the LLM. 
+            Defaults to 0.0.
+        max_tokens (int, optional): Maximum tokens to generate. Defaults to 512.
+        return_sources (bool, optional): If True, include source documents 
+            in the output. Defaults to False.
+
+    Returns:
+        Union[str, Dict[str, Union[str, List[Document]]]]:
+            If `return_sources` is False, returns the answer text.
+            If True, returns a dict with:
+              - "answer" (str): the generated answer  
+              - "sources" (List[Document]): the retrieved source documents
+    """
+
+    # 1. Validate
+    if not question or not question.strip():
+        raise ValueError("La question est vide - veuillez fournir du texte.")
+
+    # 2. Configure retriever
+    retriever.search_kwargs["k"] = k
+
+    # 3. Build prompt template
+    template = (
+        "Vous êtes un assistant expert en RAG. "
+        "Répondez à la question en vous basant *uniquement* sur le contexte fourni. "
+        "Si l'information n'y figure pas, dites-le clairement.\n\n"
+        "Contexte :\n{context}\n\n"
+        "Question : {question}\n\n"
+        "Réponse :"
+    )
+    prompt = PromptTemplate(
+        template=template,
+        input_variables=["context", "question"]
+    )
+
+    # 4. Instantiate the RetrievalQA chain
+    qa_chain = RetrievalQA.from_chain_type(
+        llm=llm,
+        chain_type=chain_type,
+        retriever=retriever,
+        return_source_documents=return_sources,
+        chain_type_kwargs={
+            "prompt": prompt,
+            #"max_tokens_limit": max_tokens,
+            #"temperature": temperature
+        }
+    )
+
+    # 5. Run the chain and handle errors
+    try:
+        result = qa_chain({"query": question})
+    except Exception as e:
+        raise RuntimeError(f"Erreur RAG : {e}")
+
+    # 6. Return answer (and sources if requested)
+    if return_sources:
+        return {
+            "answer": result["result"],
+            "sources": result["source_documents"]
+        }
+    return result["result"]

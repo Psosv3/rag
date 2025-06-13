@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from rag_utils import load_documents, create_vectorstore, get_answer
+from rag_utils import build_index, get_answer
 from dotenv import load_dotenv
 
 # Charger les variables d'environnement
@@ -24,6 +24,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 # Variable globale pour stocker l'index
 vectordb = None
+build_index(DATA_DIR, HTTPException)
 
 @app.post("/upload/")
 async def upload_file(file: UploadFile = File(...)):
@@ -41,18 +42,11 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'upload: {str(e)}")
 
 @app.post("/build_index/")
-async def build_index(openai_api_key: str = Form(...)):
-    """Endpoint pour construire l'index à partir des documents."""
-    global vectordb
-    try:
-        docs = load_documents(DATA_DIR)
-        if not docs:
-            raise HTTPException(status_code=400, detail="Aucun document trouvé dans le dossier data")
-        
-        vectordb = create_vectorstore(docs, openai_api_key)
-        return {"message": "Index construit avec succès"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur lors de la construction de l'index: {str(e)}")
+async def build_index(DATA_DIR, HTTPException):
+    
+    build_index(DATA_DIR, HTTPException)
+
+    return {"message": "Index construit avec succès"}
 
 @app.post("/ask/")
 async def ask_question(
