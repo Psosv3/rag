@@ -1,5 +1,5 @@
 import os
-import faiss
+import faiss # Facebook AI Similarity Search
 import numpy as np
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -8,26 +8,19 @@ from PyPDF2 import PdfReader
 import docx
 from dotenv import load_dotenv
 
-import os
 from typing import Optional, Union, List, Dict
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 from langchain.schema import BaseRetriever, Document
 from langchain.base_language import BaseLanguageModel
+import models
 
-#from __future__ import annotations
-
-import os
 import uuid
 from pathlib import Path
-from typing import List, Optional
-
-import faiss                    # Facebook AI Similarity Search
-import numpy as np
+                  
 from tqdm.auto import tqdm
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_core.documents import Document
 from langchain_community.docstore.in_memory import InMemoryDocstore
 
 #---------------------------------
@@ -76,7 +69,7 @@ def load_documents(data_dir):
 
 
 def create_vectorstore(docs: List[str],
-                       openai_api_key: str = "REMOVED",
+                       openai_api_key: str = models.openai_key,
                        *,
                        model: str = "text-embedding-3-large",
                        splitter_chunk_size: int = 800,
