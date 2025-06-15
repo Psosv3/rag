@@ -25,7 +25,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 # Variable globale pour stocker l'index
 vectordb = None
-build_index(DATA_DIR, HTTPException)
+vectordb = build_index(DATA_DIR, HTTPException=HTTPException)
 
 @app.post("/upload/")
 async def upload_file(file: UploadFile = File(...),
@@ -50,8 +50,8 @@ async def upload_file(file: UploadFile = File(...),
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'upload: {str(e)}")
 
 @app.post("/build_index/")
-async def express_build_index(DATA_DIR, HTTPException):
-    build_index(DATA_DIR, HTTPException)
+async def express_build_index(DATA_DIR, HTTPException=HTTPException):
+    vectordb = build_index(DATA_DIR, HTTPException)
     return {"message": "Index construit avec succès"}
 
 @app.post("/ask/")
@@ -65,7 +65,8 @@ async def ask_question(question: str = Form(...)):
         )
     
     try:
-        answer = get_answer(question, vectordb.as_retriever(), models.mistral_llm)
+        # answer = get_answer(question, vectordb.as_retriever(), models.mistral_llm)
+        answer = get_answer(question, vectordb.as_retriever(search_kwargs={"k": 5}), models.mistral_llm)
         return {"answer": answer["answer"]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la génération de la réponse: {str(e)}")
