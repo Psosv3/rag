@@ -195,8 +195,7 @@ def get_answer(question: str,
                llm: BaseLanguageModel,
                *,
                k: int = 3,
-            #    chain_type: str = "refine", # or "stuff", "map_reduce", "refine"…
-               chain_type: str = "map_reduce",
+               chain_type: str = "stuff", # or "stuff", "map_reduce", "refine"…
                temperature: float = 0.0,
                max_tokens: int = 512,
                return_sources: bool = True,
@@ -234,7 +233,7 @@ def get_answer(question: str,
         raise ValueError("La question est vide - veuillez fournir du texte.")
 
     # 2. Configure retriever
-    # retriever.search_kwargs["k"] = k
+    retriever.search_kwargs["k"] = k
 
     # 3. Build prompt template
     template = (
@@ -257,7 +256,7 @@ def get_answer(question: str,
         retriever=retriever,
         return_source_documents=return_sources,
         chain_type_kwargs={
-            "prompt": prompt,
+            #"prompt": prompt,
             #"max_tokens_limit": max_tokens,
             #"temperature": temperature
         }

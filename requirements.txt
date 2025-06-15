@@ -13,3 +13,4 @@ python-dotenv==1.0.0
 tiktoken>=0.7,<1
 mistralai
 langchain-mistralai>=0.0.4
+transformers
