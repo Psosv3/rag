@@ -56,7 +56,7 @@ async def express_build_index(DATA_DIR, HTTPException=HTTPException):
     return {"message": "Index construit avec succès"}
 
 @app.post("/ask/")
-async def ask_question(question: str = Form(...)):
+async def ask_question(question: str = Form(...), langue = "Français"):
     """Endpoint pour poser une question."""
     global vectordb
     if vectordb is None:
@@ -66,6 +66,7 @@ async def ask_question(question: str = Form(...)):
         )
     
     try:
+        question = question + f"\nRépond toujours en *{langue}*"
         answer = get_answer(question, vectordb.as_retriever(), models.mistral_llm)
         return {"answer": answer["answer"]}
     except Exception as e:
