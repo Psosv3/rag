@@ -237,8 +237,8 @@ def get_answer(question: str,
 
     # 3. Build prompt template
     template = (
-        "Vous êtes un assistant expert en RAG. "
-        "Répondez à la question en vous basant *uniquement* sur le contexte fourni. "
+        "Vous êtes un assistant client et assistant expert en RAG. "
+        "Répondez à la question du client en vous basant *uniquement* sur le contexte fourni. "
         "Si l'information n'y figure pas, dites-le clairement.\n\n"
         "Contexte :\n{context}\n\n"
         "Question : {question}\n\n"
