@@ -31,6 +31,21 @@ client = Mistral(api_key = models.mistral_api_key)
 # Load environment variables
 load_dotenv()
 
+# Stockage global des vectorstores par entreprise
+vectorstores_cache = {}
+
+def get_company_data_dir(company_id: str, base_data_dir: str = "data") -> str:
+    """Retourne le répertoire de données pour une entreprise spécifique."""
+    company_dir = os.path.join(base_data_dir, f"company_{company_id}")
+    os.makedirs(company_dir, exist_ok=True)
+    return company_dir
+
+def get_company_index_dir(company_id: str, base_data_dir: str = "data") -> str:
+    """Retourne le répertoire d'index pour une entreprise spécifique."""
+    index_dir = os.path.join(base_data_dir, f"indexes", f"company_{company_id}")
+    os.makedirs(index_dir, exist_ok=True)
+    return index_dir
+
 def read_pdf(file_path):
     """Reads a PDF file and returns its text content."""
     try:
@@ -140,20 +155,57 @@ def create_vectorstore(docs: List[str],
 
     return vectordb
 
-def build_index(data_dir, HTTPException):
-    """Builds the vectorstore index from documents."""
+def build_index(company_id: str, data_dir: str = "data", HTTPException=None):
+    """Builds the vectorstore index from documents for a specific company."""
     try:
-        docs = load_documents(data_dir)
+        # Répertoire spécifique à l'entreprise
+        company_data_dir = get_company_data_dir(company_id, data_dir)
+        company_index_dir = get_company_index_dir(company_id, data_dir)
+        
+        # Charger les documents de l'entreprise
+        docs = load_documents(company_data_dir)
         if not docs:
-            raise HTTPException(status_code=400, detail="Aucun document trouvé dans le dossier data")
-        vectordb = create_vectorstore(docs)
+            if HTTPException:
+                raise HTTPException(status_code=400, detail=f"Aucun document trouvé pour l'entreprise {company_id}")
+            else:
+                raise ValueError(f"Aucun document trouvé pour l'entreprise {company_id}")
+        
+        # Créer le vectorstore avec persistance
+        vectordb = create_vectorstore(docs, persist_dir=company_index_dir)
+        
+        # Mettre en cache
+        vectorstores_cache[company_id] = vectordb
+        
         return vectordb
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur lors de la construction de l'index: {str(e)}")
+        if HTTPException:
+            raise HTTPException(status_code=500, detail=f"Erreur lors de la construction de l'index: {str(e)}")
+        else:
+            raise e
+
+def get_or_load_vectorstore(company_id: str, data_dir: str = "data") -> Optional[FAISS]:
+    """Récupère le vectorstore depuis le cache ou le charge depuis le disque."""
+    # Vérifier le cache
+    if company_id in vectorstores_cache:
+        return vectorstores_cache[company_id]
+    
+    # Essayer de charger depuis le disque
+    company_index_dir = get_company_index_dir(company_id, data_dir)
+    if os.path.exists(company_index_dir) and os.listdir(company_index_dir):
+        try:
+            embedder = OpenAIEmbeddings(model="text-embedding-3-large")
+            vectordb = FAISS.load_local(company_index_dir, embedder, allow_dangerous_deserialization=True)
+            vectorstores_cache[company_id] = vectordb
+            return vectordb
+        except Exception as e:
+            print(f"Erreur lors du chargement de l'index pour l'entreprise {company_id}: {e}")
+    
+    return None
 
 def get_answer(question: str,
-               retriever: BaseRetriever,
+               company_id: str,
                llm: BaseLanguageModel,
+               data_dir: str = "data",
                *,
                k: int = 10,
                rerank_top_n: int = 5,
@@ -163,10 +215,17 @@ def get_answer(question: str,
                return_sources: bool = True,
                ) -> Union[str, Dict[str, Union[str, List[Document]]]]:
     """
-    Retrieve an answer to a question via a RAG pipeline with reranking.
+    Retrieve an answer to a question via a RAG pipeline with reranking for a specific company.
     """
     if not question or not question.strip():
         raise ValueError("La question est vide - veuillez fournir du texte.")
+
+    # Récupérer le vectorstore de l'entreprise
+    vectordb = get_or_load_vectorstore(company_id, data_dir)
+    if vectordb is None:
+        raise ValueError(f"Aucun index trouvé pour l'entreprise {company_id}. Veuillez d'abord construire l'index.")
+    
+    retriever = vectordb.as_retriever()
 
     # 1. Top-K retrieval (vector)
     retriever.search_kwargs["k"] = k
@@ -218,3 +277,34 @@ def get_answer(question: str,
             "sources": docs
         }
     return result["output_text"]
+
+def clear_company_cache(company_id: str):
+    """Vide le cache vectorstore pour une entreprise spécifique."""
+    if company_id in vectorstores_cache:
+        del vectorstores_cache[company_id]
+
+def get_company_stats(company_id: str, data_dir: str = "data") -> Dict:
+    """Retourne des statistiques sur les documents et l'index d'une entreprise."""
+    company_data_dir = get_company_data_dir(company_id, data_dir)
+    company_index_dir = get_company_index_dir(company_id, data_dir)
+    
+    # Compter les documents
+    doc_count = 0
+    total_size = 0
+    if os.path.exists(company_data_dir):
+        for fname in os.listdir(company_data_dir):
+            if fname.endswith(('.pdf', '.docx')):
+                doc_count += 1
+                fpath = os.path.join(company_data_dir, fname)
+                total_size += os.path.getsize(fpath)
+    
+    # Vérifier si l'index existe
+    index_exists = os.path.exists(company_index_dir) and os.listdir(company_index_dir)
+    
+    return {
+        "company_id": company_id,
+        "document_count": doc_count,
+        "total_size_bytes": total_size,
+        "index_exists": index_exists,
+        "in_cache": company_id in vectorstores_cache
+    } 

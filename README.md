@@ -96,3 +96,8 @@ RAG/
 ├── data/                # Dossier pour les documents
 └── README.md
 ``` 
+
+
+
+## utiliser le venv
+.venv/Scripts/python.exe -m uvicorn app:app --host 0.0.0.0 --port 8000

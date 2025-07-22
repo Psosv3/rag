@@ -44,3 +44,5 @@ media/
 # 💡 Autres fichiers temporaires
 .DS_Store
 Thumbs.db
+
+requirements(backup).txt
