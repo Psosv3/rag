@@ -1,6 +1,6 @@
 # Système RAG (Retrieval-Augmented Generation)
 
-Ce projet est un système RAG simple qui permet de :
+Ce projet est un système RAG qui permet de :
 1. Uploader des documents PDF ou DOCX
 2. Construire un index de recherche
 3. Poser des questions sur le contenu des documents
