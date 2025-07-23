@@ -1,5 +1,7 @@
 import os
 import jwt
+import uuid
+from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -8,6 +10,7 @@ from dotenv import load_dotenv
 import models
 import httpx
 from typing import Optional, Dict
+from pydantic import BaseModel
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -173,18 +176,76 @@ async def express_build_index(current_user: AuthUser = Depends(get_current_user)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la construction de l'index: {str(e)}")
 
-from pydantic import BaseModel
-
 class QuestionRequest(BaseModel):
     question: str
     langue: str = "Français"
+
+class PublicQuestionRequest(BaseModel):
+    question: str
+    company_id: str
+    session_id: Optional[str] = None
+    external_user_id: Optional[str] = None  # Identifiant de l'utilisateur externe (optionnel)
+    langue: str = "Français"
+
+class PublicChatSession(BaseModel):
+    session_id: str
+    company_id: str
+    external_user_id: Optional[str] = None
+    title: str
+    created_at: str
+
+class PublicChatMessage(BaseModel):
+    message_id: str
+    session_id: str
+    content: str
+    role: str  # 'user' ou 'assistant'
+    created_at: str
+
+# Stockage en mémoire des sessions publiques (en production, utilisez une base de données)
+public_sessions = {}
+public_messages = {}
+
+async def create_public_session(company_id: str, external_user_id: Optional[str] = None) -> PublicChatSession:
+    """Crée une nouvelle session de chat publique."""
+    session_id = str(uuid.uuid4())
+    title = f"Conversation publique {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+    
+    session = PublicChatSession(
+        session_id=session_id,
+        company_id=company_id,
+        external_user_id=external_user_id,
+        title=title,
+        created_at=datetime.now().isoformat()
+    )
+    
+    public_sessions[session_id] = session
+    public_messages[session_id] = []
+    
+    return session
+
+async def add_public_message(session_id: str, content: str, role: str) -> PublicChatMessage:
+    """Ajoute un message à une session publique."""
+    message_id = str(uuid.uuid4())
+    message = PublicChatMessage(
+        message_id=message_id,
+        session_id=session_id,
+        content=content,
+        role=role,
+        created_at=datetime.now().isoformat()
+    )
+    
+    if session_id not in public_messages:
+        public_messages[session_id] = []
+    
+    public_messages[session_id].append(message)
+    return message
 
 @app.post("/ask/")
 async def ask_question(
     request: QuestionRequest,
     current_user: AuthUser = Depends(get_current_user)
 ):
-    """Endpoint pour poser une question en utilisant les documents de l'entreprise."""
+    """Endpoint pour poser une question en utilisant les documents de l'entreprise (authentifié)."""
     try:
         question_with_language = request.question + f"\nRépond toujours en *{request.langue}*"
         answer = get_answer(
@@ -200,6 +261,96 @@ async def ask_question(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la génération de la réponse: {str(e)}")
+
+@app.post("/ask_public/")
+async def ask_question_public(request: PublicQuestionRequest):
+    """Endpoint public pour poser une question sans authentification."""
+    try:
+        # Vérifier que l'entreprise existe en vérifiant la présence de données
+        company_data_dir = get_company_data_dir(request.company_id, DATA_DIR)
+        if not os.path.exists(company_data_dir):
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Entreprise {request.company_id} non trouvée ou aucun document disponible"
+            )
+        
+        # Créer ou récupérer la session
+        session_id = request.session_id
+        if not session_id or session_id not in public_sessions:
+            session = await create_public_session(request.company_id, request.external_user_id)
+            session_id = session.session_id
+        else:
+            session = public_sessions[session_id]
+            # Vérifier que la session appartient à la bonne entreprise
+            if session.company_id != request.company_id:
+                raise HTTPException(status_code=400, detail="Session non compatible avec cette entreprise")
+        
+        # Ajouter la question utilisateur
+        await add_public_message(session_id, request.question, "user")
+        
+        # Générer la réponse
+        question_with_language = request.question + f"\nRépond toujours en *{request.langue}*"
+        answer = get_answer(
+            question_with_language,
+            request.company_id,
+            models.mistral_llm,
+            DATA_DIR
+        )
+        
+        assistant_response = answer["answer"]
+        
+        # Ajouter la réponse de l'assistant
+        await add_public_message(session_id, assistant_response, "assistant")
+        
+        return {
+            "answer": assistant_response,
+            "company_id": request.company_id,
+            "session_id": session_id,
+            "external_user_id": request.external_user_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la génération de la réponse: {str(e)}")
+
+@app.get("/sessions_public/{company_id}")
+async def get_public_sessions(company_id: str, external_user_id: Optional[str] = None):
+    """Récupère les sessions publiques pour une entreprise (et optionnellement un utilisateur externe)."""
+    try:
+        filtered_sessions = []
+        for session in public_sessions.values():
+            if session.company_id == company_id:
+                if external_user_id is None or session.external_user_id == external_user_id:
+                    filtered_sessions.append(session)
+        
+        return {
+            "sessions": filtered_sessions,
+            "company_id": company_id,
+            "total": len(filtered_sessions)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des sessions: {str(e)}")
+
+@app.get("/messages_public/{session_id}")
+async def get_public_messages(session_id: str):
+    """Récupère les messages d'une session publique."""
+    try:
+        if session_id not in public_messages:
+            raise HTTPException(status_code=404, detail="Session non trouvée")
+        
+        messages = public_messages[session_id]
+        session = public_sessions.get(session_id)
+        
+        return {
+            "messages": messages,
+            "session": session,
+            "total": len(messages)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des messages: {str(e)}")
 
 @app.get("/stats/")
 async def get_stats(current_user: AuthUser = Depends(get_current_user)):
@@ -276,10 +427,14 @@ async def root():
             "/upload/": "Uploader un fichier PDF ou DOCX (authentification requise)",
             "/build_index/": "Construire l'index pour votre entreprise (authentification requise)",
             "/ask/": "Poser une question (authentification requise)",
+            "/ask_public/": "Poser une question publique (aucune authentification requise)",
+            "/sessions_public/{company_id}": "Lister les sessions publiques (aucune authentification requise)",
+            "/messages_public/{session_id}": "Récupérer les messages d'une session publique (aucune authentification requise)",
             "/stats/": "Statistiques de votre entreprise (authentification requise)",
             "/documents/": "Lister les documents de votre entreprise (authentification requise)",
             "/clear_cache/": "Vider le cache (admin uniquement)",
             "/health/": "Vérification de l'état de l'API"
         },
-        "auth_required": "Bearer token JWT requis pour tous les endpoints sauf /health/ et /"
+        "public_endpoints": ["/ask_public/", "/sessions_public/", "/messages_public/", "/health/", "/"],
+        "auth_required": "Bearer token JWT requis pour tous les endpoints sauf les endpoints publics"
     } 
