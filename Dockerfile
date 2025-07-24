@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     g++ \
     libopenblas-dev \
     libomp-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copier les fichiers de requirements
