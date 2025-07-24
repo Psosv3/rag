@@ -10,21 +10,35 @@ services:
       - PYTHONUNBUFFERED=1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
     ports:
-    - "18000:8000"  # ✅ expose API sur http://localhost:18000 pour debug local
+      - "${EXTERNAL_API_PORT:-18000}:${API_PORT:-8000}"  # expose API pour debug local
     networks:
       - rag-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${API_PORT:-8000}/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   nginx:
     image: nginx:alpine
     container_name: rag-nginx
     restart: unless-stopped
+    depends_on:
+      rag-api:
+        condition: service_healthy
     ports:
-      - "8080:80"
-      - "8443:443"
+      - "${EXTERNAL_HTTP_PORT:-8080}:80"
+      - "${EXTERNAL_HTTPS_PORT:-8443}:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
       - ./nginx/api-rag.onexus.tech.conf:/etc/nginx/sites-available/api-rag.onexus.tech.conf
@@ -33,6 +47,11 @@ services:
       - /var/www/certbot:/var/www/certbot
     networks:
       - rag-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 networks:
   rag-network:
