@@ -207,7 +207,7 @@ def get_answer(question: str,
                llm: BaseLanguageModel,
                data_dir: str = "data",
                *,
-               k: int = 10,
+               k: int = 1000,
                rerank_top_n: int = 5,
                chain_type: str = "stuff",
                temperature: float = 0.0,
@@ -258,6 +258,7 @@ def get_answer(question: str,
         from langchain.chains.question_answering import load_qa_chain
 
         docs = compression_retriever.get_relevant_documents(question)
+        # docs = load_documents(get_company_data_dir(company_id, data_dir))
 
         qa_chain = load_qa_chain(
             llm,
