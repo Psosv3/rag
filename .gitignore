@@ -46,3 +46,4 @@ media/
 Thumbs.db
 
 requirements(backup).txt
+data/

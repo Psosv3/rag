@@ -259,7 +259,7 @@ def get_answer(question: str,
 
         docs = compression_retriever.get_relevant_documents(question)
         # docs = load_documents(get_company_data_dir(company_id, data_dir))
-
+        print(f'-----------------: {docs}')
         qa_chain = load_qa_chain(
             llm,
             chain_type=chain_type,
