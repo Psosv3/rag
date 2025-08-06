@@ -80,10 +80,10 @@ def load_documents(data_dir):
 
 def create_vectorstore(docs: List[str],
                       *,
-                      model: str = "text-embedding-3-large",   # Use OpenAI, or swap for multilingual if needed
+                      model: str = "text-embedding-3-large",
                       splitter_chunk_size: int = 1000000,
                       splitter_overlap: int = 100,
-                      embed_batch_size: int = 128,
+                      embed_batch_size: int = 1000000,
                       use_hnsw: bool = True,
                       hnsw_m: int = 32,
                       normalise: bool = True,
