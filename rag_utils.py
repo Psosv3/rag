@@ -81,7 +81,7 @@ def load_documents(data_dir):
 def create_vectorstore(docs: List[str],
                       *,
                       model: str = "text-embedding-3-large",   # Use OpenAI, or swap for multilingual if needed
-                      splitter_chunk_size: int = 800,
+                      splitter_chunk_size: int = 1000000,
                       splitter_overlap: int = 100,
                       embed_batch_size: int = 128,
                       use_hnsw: bool = True,
@@ -241,10 +241,12 @@ def get_answer(question: str,
 
     # 3. Build French prompt (for both map and combine steps)
     map_template = (
-        "Vous êtes un assistant client et expert en RAG. "
-        "Répondez à la question du client en vous basant *uniquement* sur le contexte fourni. "
-        "Si l'information n'y figure pas, dites-le clairement et n'abordez aucune discussion sans rapport avec le contexte fourni. "
-        "Soyez très clair, concis et précis. Faites des réponses courtes. \n\n"
+        "Vous êtes un assistant client travaillant pour l'entreprise principale décrit dans le contexte. "
+        "Assistez les clients dans leurs quêtes et répondez aux clients en vous basant uniquement sur le contexte fourni. "
+        "Si l'information n'y figure pas, demandez plus de précision mais ne fournis aucune information en dehors du contexte fournis.. "
+        "Soyez très gentil, clair, concis et précis. Faites des réponses courtes. Soyez très aimable."
+        "Il est interdit de fournir des informations en dehors du contexte fournis, et d'utiliser ' ** '. \n\n"
+        "Si on vous demande quel modèle se trouve derrière vous ou si on vous pose toutes questions relatives à l'intelligence artificielle, répondez toujours ' Je préfère plutôt vous aider que de parler de moi :) ' \n\n"
         "Contexte :\n{context}\n\n"
         "Question : {question}\n\n"
         "Réponse :"
