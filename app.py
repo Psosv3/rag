@@ -361,6 +361,43 @@ async def get_stats(current_user: AuthUser = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des statistiques: {str(e)}")
 
+@app.delete("/documents/{filename}")
+async def delete_document(
+    filename: str,
+    background_tasks: BackgroundTasks,
+    current_user: AuthUser = Depends(get_current_user)
+):
+    """Supprime un document physique du système de fichiers de l'entreprise."""
+    try:
+        # Répertoire spécifique à l'entreprise
+        company_data_dir = get_company_data_dir(current_user.company_id, DATA_DIR)
+        file_path = os.path.join(company_data_dir, filename)
+        
+        # Vérifier que le fichier existe
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"Fichier {filename} non trouvé")
+        
+        # Vérifier que c'est bien un fichier de document (sécurité)
+        if not filename.endswith(('.pdf', '.docx')):
+            raise HTTPException(status_code=400, detail="Seuls les fichiers PDF et DOCX peuvent être supprimés")
+        
+        # Supprimer le fichier physique
+        os.remove(file_path)
+        
+        # Reconstruire l'index en arrière-plan (pour supprimer le document de l'index)
+        background_tasks.add_task(rebuild_company_index, current_user.company_id)
+        
+        return {
+            "message": f"Document {filename} supprimé avec succès",
+            "company_id": current_user.company_id,
+            "filename": filename
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la suppression du document: {str(e)}")
+
 @app.delete("/clear_cache/")
 async def clear_cache(current_user: AuthUser = Depends(get_current_user)):
     """Vide le cache vectorstore de l'entreprise (admin uniquement)."""
@@ -432,6 +469,7 @@ async def root():
             "/messages_public/{session_id}": "Récupérer les messages d'une session publique (aucune authentification requise)",
             "/stats/": "Statistiques de votre entreprise (authentification requise)",
             "/documents/": "Lister les documents de votre entreprise (authentification requise)",
+            "DELETE /documents/{filename}": "Supprimer un document physique (authentification requise)",
             "/clear_cache/": "Vider le cache (admin uniquement)",
             "/health/": "Vérification de l'état de l'API"
         },
