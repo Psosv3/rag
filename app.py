@@ -476,3 +476,4 @@ async def root():
         "public_endpoints": ["/ask_public/", "/sessions_public/", "/messages_public/", "/health/", "/"],
         "auth_required": "Bearer token JWT requis pour tous les endpoints sauf les endpoints publics"
     } 
+# test pour voir si ça marche
