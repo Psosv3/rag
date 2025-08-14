@@ -205,6 +205,72 @@ class PublicChatMessage(BaseModel):
 public_sessions = {}
 public_messages = {}
 
+async def load_public_session_from_supabase(session_id: str) -> Optional[PublicChatSession]:
+    """Charge une session publique depuis Supabase."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{SUPABASE_URL}/rest/v1/public_chat_sessions",
+                headers={
+                    "apikey": SUPABASE_ANON_KEY,
+                    "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                    "Content-Type": "application/json"
+                },
+                params={"session_id": f"eq.{session_id}"}
+            )
+            
+            if response.status_code == 200:
+                sessions_data = response.json()
+                if sessions_data:
+                    session_data = sessions_data[0]
+                    session = PublicChatSession(
+                        session_id=session_data["session_id"],
+                        company_id=session_data["company_id"],
+                        external_user_id=session_data.get("external_user_id"),
+                        title=session_data["title"],
+                        created_at=session_data["created_at"]
+                    )
+                    
+                    # Charger en mémoire pour compatibilité
+                    public_sessions[session_id] = session
+                    
+                    # Charger les messages
+                    messages_response = await client.get(
+                        f"{SUPABASE_URL}/rest/v1/public_chat_messages",
+                        headers={
+                            "apikey": SUPABASE_ANON_KEY,
+                            "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                            "Content-Type": "application/json"
+                        },
+                        params={
+                            "session_id": f"eq.{session_id}",
+                            "order": "created_at.asc"
+                        }
+                    )
+                    
+                    if messages_response.status_code == 200:
+                        messages_data = messages_response.json()
+                        messages = []
+                        for msg_data in messages_data:
+                            message = PublicChatMessage(
+                                message_id=msg_data["message_id"],
+                                session_id=msg_data["session_id"],
+                                content=msg_data["content"],
+                                role=msg_data["role"],
+                                created_at=msg_data["created_at"]
+                            )
+                            messages.append(message)
+                        
+                        public_messages[session_id] = messages
+                    
+                    print(f"Session publique chargée depuis Supabase: {session_id}")
+                    return session
+                    
+    except Exception as e:
+        print(f"Erreur lors du chargement de la session depuis Supabase: {e}")
+    
+    return None
+
 async def create_public_session(company_id: str, external_user_id: Optional[str] = None) -> PublicChatSession:
     """Crée une nouvelle session de chat publique."""
     session_id = str(uuid.uuid4())
@@ -218,8 +284,38 @@ async def create_public_session(company_id: str, external_user_id: Optional[str]
         created_at=datetime.now().isoformat()
     )
     
+    # Sauvegarder en mémoire (pour compatibilité)
     public_sessions[session_id] = session
     public_messages[session_id] = []
+
+    # Sauvegarder dans Supabase
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{SUPABASE_URL}/rest/v1/public_chat_sessions",
+                headers={
+                    "apikey": SUPABASE_ANON_KEY,
+                    "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal"
+                },
+                json={
+                    "session_id": session_id,
+                    "company_id": company_id,
+                    "external_user_id": external_user_id,
+                    "title": title,
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat()
+                }
+            )
+            
+            if response.status_code in [200, 201]:
+                print(f"Session publique sauvegardée dans Supabase: {session_id}")
+            else:
+                print(f"Erreur lors de la sauvegarde de la session dans Supabase: {response.status_code} - {response.text}")
+                
+    except Exception as e:
+        print(f"Erreur lors de la sauvegarde de la session dans Supabase: {e}")
     
     return session
 
@@ -234,10 +330,40 @@ async def add_public_message(session_id: str, content: str, role: str) -> Public
         created_at=datetime.now().isoformat()
     )
     
+    # Sauvegarder en mémoire (pour compatibilité)
     if session_id not in public_messages:
         public_messages[session_id] = []
     
     public_messages[session_id].append(message)
+    
+    # Sauvegarder dans Supabase
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{SUPABASE_URL}/rest/v1/public_chat_messages",
+                headers={
+                    "apikey": SUPABASE_ANON_KEY,
+                    "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal"
+                },
+                json={
+                    "message_id": message_id,
+                    "session_id": session_id,
+                    "content": content,
+                    "role": role,
+                    "created_at": datetime.now().isoformat()
+                }
+            )
+            
+            if response.status_code in [200, 201]:
+                print(f"Message public sauvegardé dans Supabase: {message_id}")
+            else:
+                print(f"Erreur lors de la sauvegarde du message dans Supabase: {response.status_code} - {response.text}")
+                
+    except Exception as e:
+        print(f"Erreur lors de la sauvegarde du message dans Supabase: {e}")
+    
     return message
 
 @app.post("/ask/")
@@ -265,6 +391,7 @@ async def ask_question(
 @app.post("/ask_public/")
 async def ask_question_public(request: PublicQuestionRequest):
     """Endpoint public pour poser une question sans authentification."""
+    print("hello")
     try:
         # Vérifier que l'entreprise existe en vérifiant la présence de données
         company_data_dir = get_company_data_dir(request.company_id, DATA_DIR)
@@ -276,17 +403,28 @@ async def ask_question_public(request: PublicQuestionRequest):
         
         # Créer ou récupérer la session
         session_id = request.session_id
-        if not session_id or session_id not in public_sessions:
+        session = None
+        
+        if session_id:
+            # Essayer de charger depuis la mémoire
+            if session_id in public_sessions:
+                session = public_sessions[session_id]
+            else:
+                # Essayer de charger depuis Supabase
+                session = await load_public_session_from_supabase(session_id)
+            
+            # Vérifier que la session appartient à la bonne entreprise
+            if session and session.company_id != request.company_id:
+                raise HTTPException(status_code=400, detail="Session non compatible avec cette entreprise")
+        
+        # Créer une nouvelle session si aucune trouvée
+        if not session:
             session = await create_public_session(request.company_id, request.external_user_id)
             session_id = session.session_id
-        else:
-            session = public_sessions[session_id]
-            # Vérifier que la session appartient à la bonne entreprise
-            if session.company_id != request.company_id:
-                raise HTTPException(status_code=400, detail="Session non compatible avec cette entreprise")
         
         # Ajouter la question utilisateur
         await add_public_message(session_id, request.question, "user")
+        print(f"session_id: {session_id}")
         
         # Générer la réponse
         question_with_language = request.question + f"\nRépond toujours en *{request.langue}*"
@@ -336,17 +474,19 @@ async def get_public_sessions(company_id: str, external_user_id: Optional[str] =
 async def get_public_messages(session_id: str):
     """Récupère les messages d'une session publique."""
     try:
-        if session_id not in public_messages:
-            raise HTTPException(status_code=404, detail="Session non trouvée")
+        # Essayer de charger depuis la mémoire d'abord
+        if session_id in public_messages:
+            messages = public_messages[session_id]
+            session = public_sessions.get(session_id)
+        else:
+            # Essayer de charger depuis Supabase
+            session = await load_public_session_from_supabase(session_id)
+            if not session:
+                raise HTTPException(status_code=404, detail="Session non trouvée")
+            
+            messages = public_messages.get(session_id, [])
         
-        messages = public_messages[session_id]
-        session = public_sessions.get(session_id)
-        
-        return {
-            "messages": messages,
-            "session": session,
-            "total": len(messages)
-        }
+        return messages
     except HTTPException:
         raise
     except Exception as e:
