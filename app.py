@@ -37,6 +37,8 @@ SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
 
 security = HTTPBearer()
 
+external_user_index = {}  # {company_id: {external_user_id: session_id}}
+
 class AuthUser:
     def __init__(self, user_id: str, company_id: str, role: str):
         self.user_id = user_id
@@ -263,7 +265,7 @@ async def load_public_session_from_supabase(session_id: str) -> Optional[PublicC
                         
                         public_messages[session_id] = messages
                     
-                    print(f"Session publique chargée depuis Supabase: {session_id}")
+                    # print(f"Session publique chargée depuis Supabase: {session_id}")
                     return session
                     
     except Exception as e:
@@ -390,67 +392,68 @@ async def ask_question(
 
 @app.post("/ask_public/")
 async def ask_question_public(request: PublicQuestionRequest):
-    """Endpoint public pour poser une question sans authentification."""
-    print("hello")
+    """Endpoint public avec contexte basé sur external_user_id."""
     try:
-        # Vérifier que l'entreprise existe en vérifiant la présence de données
+        # Vérification que l'entreprise existe
         company_data_dir = get_company_data_dir(request.company_id, DATA_DIR)
         if not os.path.exists(company_data_dir):
             raise HTTPException(
-                status_code=404, 
+                status_code=404,
                 detail=f"Entreprise {request.company_id} non trouvée ou aucun document disponible"
             )
-        
-        # Créer ou récupérer la session
-        session_id = request.session_id
+
+        session_id = None
         session = None
-        
-        if session_id:
-            # Essayer de charger depuis la mémoire
-            if session_id in public_sessions:
-                session = public_sessions[session_id]
-            else:
-                # Essayer de charger depuis Supabase
-                session = await load_public_session_from_supabase(session_id)
-            
-            # Vérifier que la session appartient à la bonne entreprise
-            if session and session.company_id != request.company_id:
-                raise HTTPException(status_code=400, detail="Session non compatible avec cette entreprise")
-        
-        # Créer une nouvelle session si aucune trouvée
-        if not session:
+
+        #1. Recherche auto de la session si external_user_id fourni
+        if request.external_user_id:
+            company_sessions = external_user_index.setdefault(request.company_id, {})
+            if request.external_user_id in company_sessions:
+                possible_session_id = company_sessions[request.external_user_id]
+                if possible_session_id in public_sessions:
+                    session_id = possible_session_id
+
+        #2. Création d'une session si nécessaire
+        if not session_id:
             session = await create_public_session(request.company_id, request.external_user_id)
             session_id = session.session_id
-        
-        # Ajouter la question utilisateur
+            if request.external_user_id:
+                external_user_index[request.company_id][request.external_user_id] = session_id
+        else:
+            session = public_sessions[session_id]
+            if session.company_id != request.company_id:
+                raise HTTPException(status_code=400, detail="Session non compatible avec cette entreprise")
+
+        #3. On ajoute le message utilisateur à l’historique en mémoire
         await add_public_message(session_id, request.question, "user")
-        print(f"session_id: {session_id}")
+
+        #4. Construction du contexte de la conversation
+        messages_history = public_messages.get(session_id, [])
+        conversation_context = ""
+        for msg in messages_history:
+            #role_label = "User" if msg.role == "user" else "Assistant"
+            conversation_context += f"{msg.role}: {msg.content}\n"
         
-        # Générer la réponse
-        question_with_language = request.question + f"\nRépond toujours en *{request.langue}*"
-        answer = get_answer(
-            question_with_language,
-            request.company_id,
-            models.mistral_llm,
-            DATA_DIR
-        )
-        
+        #5. On envoie toute la conversation au LLM
+        prompt = conversation_context + f"Utilisateur: {request.question}\nRépond toujours en {request.langue}"
+
+        answer = get_answer(prompt, request.company_id, models.mistral_llm, DATA_DIR)
         assistant_response = answer["answer"]
-        
-        # Ajouter la réponse de l'assistant
+
+        #6. Ajout réponse assistant
         await add_public_message(session_id, assistant_response, "assistant")
-        
+
         return {
             "answer": assistant_response,
             "company_id": request.company_id,
             "session_id": session_id,
             "external_user_id": request.external_user_id
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur lors de la génération de la réponse: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la génération de la réponse: {str(e)}")
 
 @app.get("/sessions_public/{company_id}")
 async def get_public_sessions(company_id: str, external_user_id: Optional[str] = None):
