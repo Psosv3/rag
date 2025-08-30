@@ -1,4 +1,4 @@
-tf-keras
+agents
 numpy
 uvicorn
 langchain

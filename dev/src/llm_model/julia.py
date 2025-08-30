@@ -4,7 +4,7 @@ from pathlib import Path
 from tools.functions import read_instructions, handle_stream_events
 from tools.for_agents import read_dir_struct, read_file_contents
 from .model_server import planner_model, planner_core_model, executor_model, mcp_server
-from openai_agents import Agent, Runner, ModelSettings, AgentOutputSchema
+from agents import Agent, Runner, ModelSettings, AgentOutputSchema
 from dotenv import load_dotenv
 
 

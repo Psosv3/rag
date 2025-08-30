@@ -2,7 +2,7 @@
 from __future__ import annotations
 import unicodedata
 import os
-from openai_agents import function_tool
+from agents import function_tool
 
 from tools.gmail import get_gmail_service
 from email.message import EmailMessage
