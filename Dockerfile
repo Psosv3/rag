@@ -15,8 +15,10 @@ RUN apt-get update && apt-get install -y \
 # Copier les fichiers de requirements
 COPY dev/requirements.txt .
 
+RUN pip install uv
+
 # Installer les dépendances Python
-RUN pip install --no-cache-dir -r requirements.txt
+RUN uv pip install --no-cache-dir -r requirements.txt
 
 RUN python -c "import numpy; print('Numpy version:', numpy.__version__)"
 
