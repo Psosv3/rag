@@ -276,6 +276,162 @@ async def ask_question_public(request: PublicQuestionRequest,
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la génération de la réponse: {str(e)}")
 
+# TODO: TEST ASK DANS DASHBOARD
+@app.post("/ask/")
+async def ask_question_public(request: PublicQuestionRequest,
+                              background_tasks: BackgroundTasks = None,
+                              ):
+    
+    """Endpoint public avec contexte basé sur external_user_id."""
+    
+    global VECTORSTORES_CACHE, COMPANIES_LIST, public_sessions, public_messages
+
+    try:
+        # Vérification que l'entreprise existe
+        company_data_dir = get_company_data_dir(request.company_id, DATA_DIR)
+        if not os.path.exists(company_data_dir):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Entreprise {request.company_id} non trouvée ou aucun document disponible"
+            )
+
+        session_id = None
+        session = None
+
+        #1. Recherche auto de la session si external_user_id fourni
+        if request.external_user_id:
+            company_sessions = external_user_index.setdefault(request.company_id, {})
+            if request.external_user_id in company_sessions:
+                possible_session_id = company_sessions[request.external_user_id]
+                if possible_session_id in public_sessions:
+                    session_id = possible_session_id
+
+        #2. Création d'une session si nécessaire
+        if not session_id:
+            session, public_sessions, public_messages = await create_public_session(request.company_id, public_sessions, public_messages, request.external_user_id)
+            session_id = session.session_id
+            if request.external_user_id:
+                external_user_index[request.company_id][request.external_user_id] = session_id
+        else:
+            session = public_sessions[session_id]
+            if session.company_id != request.company_id:
+                raise HTTPException(status_code=400, detail="Session non compatible avec cette entreprise")
+
+        #3. On ajoute le message utilisateur à l'historique en mémoire
+            #3.a. Vérifie d'abord si la disussion est continuable
+        if session_id+request.company_id in forbidden_user :
+            return
+            #3.b. ajoute ensuite le message utilisateur à l'historique en mémoire si continuable
+        await add_public_message(session_id, request.question, "user", public_messages)
+
+        #4. Recherche de contexte RAG + ajout vectorDB dans cache si besoin + nom companie
+            ##4.a Recherche de contexte RAG
+        vectordb, docs = get_rag_context(request.question, request.company_id, VECTORSTORES_CACHE)
+
+            ##4.b ajout vectorDB dans cache si besoin
+        if not request.company_id in VECTORSTORES_CACHE:
+            VECTORSTORES_CACHE[request.company_id] = vectordb
+
+            ##4.c Nom companie
+        company_name = COMPANIES_LIST.get(request.company_id,"votre entreprise")
+
+        #5. Construction du contexte de la conversation + system_message
+        messages_history = public_messages.get(session_id, [])
+        syst_msg = system_message(company_name)   
+
+        #6. On envoie toute la conversation au LLM
+        messages = build_chat_messages(messages_history=messages_history,
+                                       user_input=request.question,
+                                       context = docs,
+                                       system_message = syst_msg,
+                                       langue=request.langue,
+                                       max_history_pairs=30
+                                       )
+        
+        print(f"****************{messages}")
+
+        #7. Agent planner
+        # 7.1) Planner call
+        # planner_out: PlannerOutput = await julia_planner(prompt)
+        planner_out: PlannerOutput = await julia_planner(messages)
+
+        if not planner_out.continue_discussion :
+            forbidden_user.append(session_id+request.company_id)
+            return {
+                "answer": "Je suis navré, je suis obligé de clôturer notre discussion.",
+                "company_id": request.company_id,
+                "session_id": session_id,
+                "external_user_id": request.external_user_id
+            }
+
+        # audit
+        #log_audit({"type": "planner_decision","company_id": request.company_id,"session_id": session_id,"action_type": planner_out.action_type,"safety_flags": planner_out.safety_flags},AUDIT_LOGS)
+
+        lang = request.langue or "Français"
+
+        def respond_and_log(text: str):
+            safe = safety_post_filter(text)
+            asyncio.create_task(add_public_message(session_id, safe, "assistant", public_messages))
+            #log_audit({"type": "assistant_answer","company_id": request.company_id,"session_id": session_id,"answer_len": len(safe)},AUDIT_LOGS)
+
+            return {
+                "answer": safe,
+                "company_id": request.company_id,
+                "session_id": session_id,
+                "external_user_id": request.external_user_id
+            }
+
+        # 7.2) Route by action_type
+        if planner_out.action_type == "reject":
+            reject = planner_out.user_visible_answer or "Désolé, je ne suis pas en mesure de vous aider sur ce point."
+            return respond_and_log(reject)
+
+        if planner_out.action_type == "clarify":
+            clarif = planner_out.user_visible_answer or "D'accord. Mais je ne suis pas sûr de clairement comprendre votre demande. Pouvez-vous détailler encore un peu plus svp ?"
+            return respond_and_log(clarif)
+
+        if planner_out.action_type in ("answer"):
+            if not planner_out.user_visible_answer:
+                return respond_and_log("Pouvez-vous me fournir un peu plus de détail svp ?")
+            return respond_and_log(planner_out.user_visible_answer)
+
+        if planner_out.action_type == "tool":
+            # Accusé de prise en charge immédiat
+            list_temp_resp = [
+                        "D'accord. Je regarde un instant et je reviens vers vous.",
+                        "Très bien. Un instant, je reviens vers vous.",
+                        "Entendu. Je regarde un instant.",
+                        "D'accord. Je fais le point et je vous reviens.",
+                        "OK. Je vérifie en interne et je reviens vers vous.",
+                        "Entendu. Laissez-moi un instant, je reviens vers vous.",
+                        "Très bien. Je me charge de cela et je vous tiens informé.",
+                        "Ok. Je reviens vers vous rapidement.",
+                        "D'accord. Je vois de mon côté et je reviens vers vous au plus vite.",
+                    ]
+
+            temp_resp = random.choice(list_temp_resp)
+
+            await add_public_message(session_id, temp_resp, "assistant", public_messages)
+            background_tasks.add_task(run_exec_plan_now,
+                                      session_id,
+                                      request.company_id,
+                                      planner_out,
+                                      SUPABASE_URL, 
+                                      SUPABASE_ANON_KEY)
+
+            return {
+                "answer": temp_resp, #planner_out.user_visible_answer,
+                "company_id": request.company_id,
+                "session_id": session_id,
+                "external_user_id": request.external_user_id
+            }
+
+        # default fallback
+        return respond_and_log(controlled_fallback_response(lang))
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la génération de la réponse: {str(e)}")
+
 
 @app.post("/confirm_execution/")
 async def confirm_execution(req: ExecConfirmationRequest):

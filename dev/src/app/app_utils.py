@@ -185,7 +185,7 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(HTTPB
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer())) -> AuthUser:
     """Dependency pour obtenir l'utilisateur actuel."""
-    return AuthUser(user_id="61dd73ab-711c-42c8-8241-d64a78fc633d",company_id="f40b912a-959d-472e-bbab-1628f04910d7",role="admin") #await verify_token(credentials) #
+    return await verify_token(credentials)
 
 
 async def create_public_session(company_id: str, public_sessions : dict, public_messages : dict, external_user_id: Optional[str] = None) -> PublicChatSession:
