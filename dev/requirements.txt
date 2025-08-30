@@ -27,6 +27,5 @@ fastapi
 torch
 transformers
 pydantic
-agents
 groq
 tzdata

@@ -21,7 +21,8 @@ RUN pip install uv
 RUN uv venv /app/.venv && \
     uv pip install --no-cache-dir -r requirements.txt
 
-# Tester l'installation de numpy
+# Vérifier la version de pip et tester l'installation de numpy
+RUN /app/.venv/bin/pip --version
 RUN /app/.venv/bin/python -c "import numpy; print('Numpy version:', numpy.__version__)"
 
 # Copier le code de l'application

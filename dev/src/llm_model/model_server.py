@@ -1,8 +1,8 @@
 
-from agents import OpenAIChatCompletionsModel
-from agents import AsyncOpenAI as AgentsAsyncOpenAI 
+from openai_agents import OpenAIChatCompletionsModel
+from openai_agents import AsyncOpenAI as AgentsAsyncOpenAI 
 from groq import AsyncGroq
-from agents.mcp import MCPServerSse
+from openai_agents.mcp import MCPServerSse
 from langchain_mistralai.chat_models import ChatMistralAI
 import os
 from dotenv import load_dotenv
