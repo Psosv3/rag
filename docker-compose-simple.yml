@@ -6,7 +6,7 @@ services:
     container_name: rag-api
     restart: unless-stopped
     environment:
-      - PYTHONPATH=/app
+      - PYTHONPATH=/app:/app/dev/src
       - PYTHONUNBUFFERED=1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - MISTRAL_API_KEY=${MISTRAL_API_KEY}
