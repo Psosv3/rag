@@ -12,7 +12,7 @@ import random
 from typing import Any, Dict, Optional
 import asyncio
 from contextlib import asynccontextmanager
-from .app_utils import ExecConfirmationRequest, AuthUser, PublicChatMessage, PublicChatSession, PublicQuestionRequest, load_public_session_from_supabase, add_public_message, create_public_session, run_exec_plan_now, get_current_user, load_all_companies_id
+from .app_utils import ExecConfirmationRequest, AuthUser, PublicChatMessage, PublicChatSession, PublicQuestionRequest, sse_event, load_public_session_from_supabase, add_public_message, create_public_session, run_exec_plan_now, get_current_user, load_all_companies_id
 from pathlib import Path
 
 
@@ -65,8 +65,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # En production, spécifiez les origines autorisées
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
@@ -112,7 +112,7 @@ async def upload_file(
 
 
 @app.post("/build_index/")
-async def express_build_index(current_user=AuthUser(user_id="61dd73ab-711c-42c8-8241-d64a78fc633d",company_id="f40b912a-959d-472e-bbab-1628f04910d7",role="admin")):#(current_user: AuthUser = Depends(get_current_user)):
+async def express_build_index(current_user: AuthUser = Depends(get_current_user)):
     """Construit l'index vectoriel pour l'entreprise de l'utilisateur."""
 
     global VECTORSTORES_CACHE
@@ -135,9 +135,6 @@ async def ask_question_public(request: PublicQuestionRequest):
     async def response_generator():
 
         global VECTORSTORES_CACHE, COMPANIES_LIST, public_sessions, public_messages
-
-        def sse_event(data: dict) -> str:
-            return json.dumps(data, ensure_ascii=False)+"\n"
 
         try:
             # 1) Vérifier la société
@@ -289,7 +286,7 @@ async def ask_question_public(request: PublicQuestionRequest):
                     )
                 
                 task = asyncio.create_task(_run_task())
-                
+
                 # task = asyncio.create_task(await run_exec_plan_now(session_id,
                 #                                                    request.company_id,
                 #                                                    planner_out,
@@ -301,16 +298,14 @@ async def ask_question_public(request: PublicQuestionRequest):
 
                 # Boucle de heartbeat + timeout + détection déconnexion
                 try:
-
                     while True:
                         done, _ = await asyncio.wait({task}, timeout=HEARTBEAT_SEC)
                         if done:
                             break
-                        #yield sse_event({"status": "pending", "session_id": session_id}, event="ping")
                     # Récupérer le résultat avec borne de temps
-                    task_result = await asyncio.wait_for(task, timeout=TASK_TIMEOUT_SEC)
+                    task_result = await task
                     final_payload = task_result if isinstance(task_result, dict) else {
-                        "answer": task_result if task_result is not None else "C'est fait !.",
+                        "answer": task_result or "C'est fait !.",
                         "company_id": request.company_id,
                         "session_id": session_id,
                         "external_user_id": request.external_user_id

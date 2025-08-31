@@ -369,3 +369,6 @@ async def load_public_session_from_supabase(session_id: str, public_sessions: di
         print(f"Erreur lors du chargement de la session depuis Supabase: {e}")
     
     return None
+
+def sse_event(payload: dict) -> str:
+    return json.dumps(payload, ensure_ascii=False)

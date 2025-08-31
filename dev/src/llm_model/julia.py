@@ -39,19 +39,9 @@ class ExecutorOutput(BaseModel):
 
 ############################# Instructions planner & executeur #############################
 
-planner_instructions = (
-    read_instructions(BASE/"dev/src/instructions/julia.md")
-    + "\n###\n"
-    + read_instructions(BASE/"dev/src/instructions/planner.md")
-    + "\n###\n"
-    + read_instructions(BASE/"dev/src/instructions/RAG_policy.md")
-    + "\n###\n"
-    + read_instructions(BASE/"dev/src/instructions/Safety_policy.md")
-    + "\n###\n"
-    + read_instructions(BASE/"dev/src/instructions/Delegation_policy.md")
-)
+planner_instructions = read_instructions(BASE/"dev/src/instructions/planner_instruction.md")
 
-executor_instructions = (read_instructions(BASE/"dev/src/instructions/executor.md"))
+executor_instructions = (read_instructions(BASE/"dev/src/instructions/executor_instruction.md"))
 
 
 ############################# Features additionnels #############################
