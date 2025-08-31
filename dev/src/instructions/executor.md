@@ -40,6 +40,7 @@ Pour faciliter la communication avec votre supérieur l'Agent Panificateur IA, v
 
 - error (str) : message destiné à votre supérieur l'Agent Panificateur pour l'informer de l'erreur rencontré lors de la réalisation de la tâche
 
+### EXEMPLE OUTPUT ###
 
 **Exemple 1 de sortie structurée valide :**
 {
@@ -58,5 +59,25 @@ Pour faciliter la communication avec votre supérieur l'Agent Panificateur IA, v
 "message": "Créneau indisponible",
 "data": "None",
 "ask": "Il n'y a plus de créneau disponible à l'heure demandé, vous voulez réserver un autre créneau ?",
+"error":  "None"
+}
+
+**Exemple 3 de sortie structurée valide :**
+{
+"status": "error",
+"final": "False",
+"message": "J'ai rencontré une difficulté, pouvez-vous repréciser votre demande ?",
+"data": "None",
+"ask": "None",
+"error":  "Erreur lors de la reservation du créneau et de l'envoie d'email"
+}
+
+**Exemple 4 de sortie structurée valide :**
+{
+"status": "need_info",
+"final": "False",
+"message": "Avant d'envoyer l'email j'aurais besoin du sujet svp",
+"data": "None",
+"ask": "Quel est le sujet que vous souhaitez aborder dans l'email ?",
 "error":  "None"
 }

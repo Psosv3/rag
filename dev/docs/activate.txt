@@ -4,7 +4,7 @@ source .venv/Scripts/activate
 
 pip install uv
 
-uv pip install -r dev/requirements.txt
+uv pip install -r requirements.txt
 
 uvicorn --app-dir dev/src app.app:app --host 0.0.0.0 --port 8000
 

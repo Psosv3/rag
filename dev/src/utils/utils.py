@@ -11,6 +11,7 @@ from llm_model.julia import planner_instructions
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo 
+import re
 #---------------------------------
 
 # Load environment variables
@@ -134,3 +135,23 @@ def load_documents(data_dir):
         elif fname.endswith(".docx"):
             docs.append(read_docx(fpath))
     return docs
+
+EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63}")
+def extract_emails(text: str):
+    out, seen = [], set()
+    for e in EMAIL_RE.findall(text):
+        e = e.rstrip(".,;:!?)]}'\"")
+        if e not in seen:
+            seen.add(e)
+            out.append(e)
+    return out
+def strip_emails(text: str) -> str:
+    return EMAIL_RE.sub("", text)
+
+EMAIL_KEY_RE = re.compile(r"""['"]email['"]\s*:\s*['"]([^'"]+)['"]""")
+def extract_intern_emails(s: str):
+    return EMAIL_KEY_RE.findall(s)
+
+def check_difference(liste_1, liste_2):
+    missing = set(liste_1).difference(liste_2)  # éléments dans liste_1 mais pas dans liste_2
+    return (len(missing) == 0), list(missing) # retourne la verif + liste des elements intrus

@@ -108,9 +108,7 @@ async def julia_planner(user_message,
         stream=False,
     )
     content = chat_completion.choices[0].message.content.strip() or "{}"
-    print(f"----------content---------{content}")
-    print(f"++++++++++PlannerOutput++++++++++{PlannerOutput.model_validate_json(content)}")
-    #return output
+
     try:
     # Valide et convertit en instance Pydantic
         return PlannerOutput.model_validate_json(content)

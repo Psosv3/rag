@@ -14,6 +14,7 @@ import asyncio
 from typing import Any, Dict, Optional
 import asyncio
 import json
+from utils.utils import extract_emails, extract_intern_emails, check_difference, strip_emails
 
 ############################################################ Variable d'Env ############################################################
 load_dotenv()
@@ -26,6 +27,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
+TOOL_SEND_EMAIL = os.getenv("TOOL_SEND_EMAIL")
 
 ############################################################ Def des différentes classes ############################################################
 
@@ -120,23 +122,40 @@ async def load_all_companies_id(SUPABASE_URL : str, SUPABASE_ANON_KEY : str) :
         print(f"Erreur lors du chargement des companies: {e}")
 
 
-async def run_exec_plan_now(session_id: Optional[str], company_id: str, plan: Dict[str, Any], SUPABASE_URL : str, SUPABASE_ANON_KEY : str) -> Dict[str, Any]:
+async def run_exec_plan_now(session_id: Optional[str],
+                            company_id: str,
+                            plan: Dict[str, Any],
+                            SUPABASE_URL : str,
+                            SUPABASE_ANON_KEY : str,
+                            public_messages: dict
+                            ) -> Dict[str, Any]:
     plan = dict(plan or {})
-    list_contact = load_intern_contact(company_id, SUPABASE_URL, SUPABASE_ANON_KEY)
-    print(type(list_contact))
-    exec_instruct = plan["exec_inst"]+f"\n\n### LISTE DES CONTACTES INTERNES ###\n\n Voici la liste des contactes dans votre entreprises. Ne l'utilisez que si vous en avez besoin, comme envoyer un email par exemple. Choisissez bien convenablement la bonne personne en fonction de son poste et de sa description de poste : \n\n<list_contact>\n"+ list_contact +"</list_contact>\n\n"
+    exec_instruct = plan["exec_inst"] 
+
+    if TOOL_SEND_EMAIL in [d.name for d in plan['tools_to_call']]  :
+        list_contact = load_intern_contact(company_id, SUPABASE_URL, SUPABASE_ANON_KEY)
+
+        instruct_email_list = extract_emails(exec_instruct) or []
+        intern_email_list = extract_intern_emails(list_contact) or []
+        verif, list_intrus = check_difference(instruct_email_list, intern_email_list)         # verification des emails authorisés
+        if verif :
+            exec_instruct = strip_emails(exec_instruct) + f"\n\n### LISTE DES CONTACTES INTERNES ###\n\n Voici la liste des contacts privés dans votre entreprises. Ne l'utilisez que si vous en avez besoin, comme contacter un responsable ou envoyer un email par exemple. Choisissez bien convenablement la bonne personne en fonction de son poste et de sa description de poste : \n\n<list_contact>\n"+ list_contact +"\n</list_contact>\n\n" 
+            #print(f"\n\nexec_instruct : -------------------------------------\n{exec_instruct}")
+        else :
+            await add_public_message(session_id, f"Je suis désolé, je ne suis pas autorisé à envoyer l'email au destinataire : {', '.join(intru for intru in list_intrus)}.", "assistant", public_messages)
+            return
+
     out = await julia_executor(exec_instruct)
-    out = out.replace("\\", "")
+    #out = out.replace("\\", "")
     #log_audit({"type": "executor_run_inline", "plan": plan, "result": out['message'], "session_id": session_id, "company_id": company_id}, AUDIT_LOGS)
     try :
         out = json.loads(out) 
-        
         return_reponse = out['message'] + out['ask'] if  out['ask'].lower() not in ["null", "none",""] else out['message']
         if session_id:
-            await add_public_message(session_id, return_reponse, "assistant")
+            await add_public_message(session_id, return_reponse, "assistant", public_messages)
         return return_reponse
-    except : 
-        return
+    except Exception as e:
+        print(f"Erreur output julia: {e}")
     
 
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer())) -> AuthUser:

@@ -31,9 +31,9 @@ def rebuild_company_index(company_id: str, DATA_DIR, HTTPException):
     """Fonction pour reconstruire l'index d'une entreprise (utilisée en arrière-plan)."""
     try:
         build_index(company_id, DATA_DIR, HTTPException)
-        print(f"Index reconstruit avec succès pour l'entreprise {company_id}")
+        #print(f"Index reconstruit avec succès pour l'entreprise {company_id}")
     except Exception as e:
-        print(f"Erreur lors de la reconstruction de l'index pour l'entreprise {company_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la re-construction de l'index: {str(e)}")
 
 def get_company_data_dir(company_id: str, base_data_dir: str = "data") -> str:
     """Retourne le répertoire de données pour une entreprise spécifique."""
