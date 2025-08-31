@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copier les fichiers de requirements
-COPY dev/requirements.txt .
+COPY requirements.txt .
 
 RUN pip install uv
 
