@@ -274,6 +274,7 @@ async def ask_question_public(request: PublicQuestionRequest):
                     "session_id": session_id,
                     "external_user_id": request.external_user_id
                 }
+                print("end of ack_payload",sse_event(ack_payload))
                 yield sse_event(ack_payload)
 
                 # Lancer la tâche (coroutine ou sync) en tâche asynchrone
@@ -312,6 +313,7 @@ async def ask_question_public(request: PublicQuestionRequest):
                         "session_id": session_id,
                         "external_user_id": request.external_user_id
                     }
+                    print("end of final_payload",sse_event(final_payload))
                     yield sse_event(final_payload)
                     return
 
