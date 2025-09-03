@@ -137,10 +137,12 @@ async def run_exec_plan_now(session_id: Optional[str],
 
         instruct_email_list = extract_emails(exec_instruct) or []
         intern_email_list = extract_intern_emails(list_contact) or []
+        print("instruct_email_list:",instruct_email_list)
+        print("intern_email_list:",intern_email_list)
         verif, list_intrus = check_difference(instruct_email_list, intern_email_list)         # verification des emails authorisés
         if verif :
             exec_instruct = strip_emails(exec_instruct) + f"\n\n### LISTE DES CONTACTES INTERNES ###\n\n Voici la liste des contacts privés dans votre entreprises. Ne l'utilisez que si vous en avez besoin, comme contacter un responsable ou envoyer un email par exemple. Choisissez bien convenablement la bonne personne en fonction de son poste et de sa description de poste : \n\n<list_contact>\n"+ list_contact +"\n</list_contact>\n\n" 
-            #print(f"\n\nexec_instruct : -------------------------------------\n{exec_instruct}")
+            print(f"\n\nexec_instruct : -------------------------------------\n{exec_instruct}")
         else :
             await add_public_message(session_id, f"Je suis désolé, je ne suis pas autorisé à envoyer l'email au destinataire : {', '.join(intru for intru in list_intrus)}.", "assistant", public_messages)
             return
@@ -151,6 +153,7 @@ async def run_exec_plan_now(session_id: Optional[str],
     try :
         out = json.loads(out) 
         return_reponse = out['message'] + out['ask'] if  out['ask'].lower() not in ["null", "none",""] else out['message']
+        print("return_reponse", return_reponse)
         if session_id:
             await add_public_message(session_id, return_reponse, "assistant", public_messages)
         return return_reponse
