@@ -247,6 +247,8 @@ async def ask_question_public(request: PublicQuestionRequest):
                 if not planner_out.user_visible_answer:
                     yield sse_event(await respond_and_log_payload("Pouvez-vous me fournir un peu plus de détail svp ?"))
                     return
+
+                print("end of answer",sse_event(await respond_and_log_payload(planner_out.user_visible_answer)))
                 yield sse_event(await respond_and_log_payload(planner_out.user_visible_answer))
                 return
 
@@ -324,6 +326,8 @@ async def ask_question_public(request: PublicQuestionRequest):
         except Exception as e:
             yield sse_event({"error": f"Erreur lors de la génération de la réponse: {str(e)}"})
             return
+
+            print("end of response_generator",sse_event(await respond_and_log_payload(controlled_fallback_response(lang))))
 
     return StreamingResponse(
         response_generator(),
