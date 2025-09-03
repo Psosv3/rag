@@ -244,7 +244,7 @@ async def ask_question_public(request: PublicQuestionRequest):
                 return
 
             if planner_out.action_type in ("answer",):
-                print("je suis sous answer")
+                print("je suis sous answer", sse_event(await respond_and_log_payload(planner_out.user_visible_answer)))
                 if not planner_out.user_visible_answer:
                     yield sse_event(await respond_and_log_payload("Pouvez-vous me fournir un peu plus de détail svp ?"))
                     return
