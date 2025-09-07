@@ -50,7 +50,7 @@ def maintenant_fr(zone) -> str:
     )
 
 def system_message(company_name, instructions = planner_instructions, assistant_name = "Julia RANDRIAMANANA"):
-    syst_msg = f"""Vous etes {assistant_name}, une assistante virtuelle expériementée avec 23 ans d'expérience en support client, qui occupe le rôle de support client en ligne.
+    syst_msg = f"""\n\n### VOTRE IDENTITE\nVous etes {assistant_name}, une assistante virtuelle expériementée avec 23 ans d'expérience en support client, qui occupe le rôle de support client en ligne.
         Vous travaillez pour la société {company_name}. Vous vous comportez comme un humain. {maintenant_fr(ZoneInfo("Europe/Paris"))}
         Votre tâche aujourd'hui est de répondres aux questions des clients externes de votre organisation {company_name} dans leurs requêtes et leurs questionnements. 
         Suivez strictement à la lettre toutes les instructions.\n
@@ -76,11 +76,11 @@ def build_chat_messages(messages_history,           # List[PublicChatMessage] tr
     hist = messages_history[-(max_history_pairs*2):-1] if max_history_pairs else messages_history[:-1]
 
     for msg in hist:
-        r = msg.role.lower()
+        r = msg["role"].lower()
         if r == "user":
-            messages.append({"role": "user", "content": msg.content})
+            messages.append({"role": "user", "content": msg["content"]})
         elif r == "assistant":
-            messages.append({"role": "assistant", "content": msg.content})
+            messages.append({"role": "assistant", "content": msg["content"]})
         # Si tu supportes un jour des messages "tool" persistés, ajoute leur mapping ici.
 
     # 2) Tour courant user

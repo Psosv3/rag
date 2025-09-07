@@ -189,9 +189,9 @@ def get_rag_context(question: str,
         data_dir (str, optional): Root directory where company data and vector indexes are stored.
         Defaults to "data".
         k (int, optional): Number of top documents to retrieve from the vector index before reranking.
-        Must be >= 1. Defaults to 1000.
-        rerank_top_n (int, optional): Number of documents to keep after reranking with FlashRank.
         Must be >= 1. Defaults to 5.
+        rerank_top_n (int, optional): Number of documents to keep after reranking with FlashRank.
+        Must be >= 1. Defaults to 3.
 
     Returns:
         String
@@ -201,10 +201,6 @@ def get_rag_context(question: str,
         RuntimeError: If an error occurs during retrieval or QA chain execution.
 
     """
-
-
-    if not question or not question.strip():
-        raise ValueError("La question est vide - veuillez fournir du texte.")
 
     # Récupérer le vectorstore de l'entreprise
     vectordb = get_or_load_vectorstore(company_id, vectorstores_cache, data_dir)

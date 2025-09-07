@@ -29,3 +29,11 @@ transformers
 pydantic
 groq
 tzdata
+redis
+sqlalchemy[asyncio]
+asyncpg
+psycopg[binary]
+pydantic-settings
+certifi
+truststore
+aiofiles
