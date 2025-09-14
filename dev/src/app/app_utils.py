@@ -265,7 +265,6 @@ def validate_question(question: str, max_len: int = _DEFAULT_Q_MAX) -> str:
 async def is_banned(r: Redis, company_id: str, session_id: str) -> bool:
     return bool(await r.sismember(BAN_SET_KEY.format(company_id=company_id), session_id))
 
-
 async def forbiden_session(r: Redis, company_id: str, session_id: str):
     await r.sadd(BAN_SET_KEY.format(company_id=company_id), session_id)
 

@@ -171,15 +171,11 @@ async def ask_question_public(req: Request,
     # 0) validate question length
     reject_question, user_question = validate_question(request.question) # check length abuse
     if reject_question : 
-        yield sse_data({"answer": "Owh! Vous êtes bien bavard. Je suis désolé, je ne peux accepter que les questions à 1000 caractères maximum.",
+        return sse_data({"answer": "Owh! Vous êtes bien bavard. Je suis désolé, je ne peux accepter que les questions à 1000 caractères maximum.",
                         "company_id": request.company_id,
                         "session_id": session_id,
                         "external_user_id": request.external_user_id,
-                        })
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                            detail=f"La question dépasse la limite autorisée de caractères")
-
-        return
+                        })        
 
     # 1) Resolve/create session
     session = await get_or_create_session(spbase, redis, request.company_id, request.external_user_id)

@@ -3,8 +3,9 @@ from typing import List, Optional, Dict, Any, Literal
 from pathlib import Path
 from tools.functions import read_instructions, handle_stream_events
 from tools.for_agents import read_dir_struct, read_file_contents
-from .model_server import planner_model, planner_core_model, executor_model, mcp_server
-from agents import Agent, Runner, ModelSettings, AgentOutputSchema
+from .model_server import planner_model, planner_core_model, executor_model, mcp_server_tool, mcp_server_escalator
+from agents import Agent, Runner, AgentOutputSchema
+from agents.model_settings import ModelSettings
 from dotenv import load_dotenv
 
 
@@ -43,6 +44,8 @@ planner_instructions = read_instructions(BASE/"dev/src/instructions/planner_inst
 
 executor_instructions = (read_instructions(BASE/"dev/src/instructions/executor_instruction.md"))
 
+escalator_instructions = (read_instructions(BASE/"dev/src/instructions/escalator_instruction.md"))
+
 
 ############################# Features additionnels #############################
 
@@ -72,10 +75,20 @@ executor_agent = Agent(
     name="Executor Agent",
     model=executor_model,
     instructions=executor_instructions,
-    mcp_servers=[mcp_server],
-    tools=[read_dir_struct, read_file_contents],
+    mcp_servers=[mcp_server_tool],
+    tools=[],
     model_settings=ModelSettings(temperature=0),
 )
+
+escalator_agent = Agent(
+    name="Escalator Agent",
+    model=executor_model,
+    instructions=escalator_instructions,
+    mcp_servers=[mcp_server_escalator],
+    tools=[],
+    model_settings=ModelSettings(temperature=0),
+)
+
 
 # Planner Agent
 async def julia_planner(user_message,
@@ -93,8 +106,9 @@ async def julia_planner(user_message,
                 "strict": True
             }
         },
-        temperature=0.6,
-        top_p=0.1,
+        temperature=0.3,
+        top_p=0.9,
+        seed = 127,
         stream=False,
     )
     content = chat_completion.choices[0].message.content.strip() or "{}"
@@ -103,15 +117,22 @@ async def julia_planner(user_message,
     # Valide et convertit en instance Pydantic
         return PlannerOutput.model_validate_json(content)
     except ValidationError as e:
-    # En prod: logger 'content' pour diagnostic et remonter une erreur claire
-        raise
+        raise e
 
 # Executor Agent
-async def julia_executor(exec_inst: str, mcp_server=mcp_server):
+async def julia_executor(exec_inst: str, mcp_server=mcp_server_tool):
     async with mcp_server:
         result = await Runner.run(
             executor_agent,
             exec_inst
             )
-        #await handle_stream_events(result)
+        return result.final_output
+    
+# Escalator Agent
+async def julia_escalator(exec_inst: str, mcp_server=mcp_server_escalator):
+    async with mcp_server:
+        result = await Runner.run(
+            executor_agent,
+            exec_inst
+            )
         return result.final_output
