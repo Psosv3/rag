@@ -7,7 +7,7 @@ from .model_server import planner_model, planner_core_model, executor_model, mcp
 from agents import Agent, Runner, AgentOutputSchema
 from agents.model_settings import ModelSettings
 from dotenv import load_dotenv
-
+from .model_utils import close_and_require_all
 
 load_dotenv()
 BASE = Path(__file__).resolve().parent.parents[2]
@@ -21,13 +21,13 @@ class ToolCall(BaseModel):
 
 class PlannerOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    action_type: Literal["answer","tool","reject","clarify"]
+    action_type: Literal["answer","tool","reject","clarify","escalate"]
     tools_to_call: List[ToolCall] = Field(default_factory=list)
     continue_discussion: bool = True
     citations_required: bool = False
-    user_visible_answer: str = ""
     exec_required: bool = False
     exec_inst: str = ""
+    user_visible_answer: str = ""
 
 class ExecutorOutput(BaseModel):
     status: str = Field(..., description="one of: Completed|need_info|error")
@@ -49,25 +49,7 @@ escalator_instructions = (read_instructions(BASE/"dev/src/instructions/escalator
 
 ############################# Features additionnels #############################
 
-def close_and_require_all(schema: dict) -> dict:
-    def walk(node, path=""):
-        if isinstance(node, dict):
-            if node.get("type") == "object":
-                if path.endswith("/args"):
-                    node["additionalProperties"] = True
-                    node["required"] = []          # rien d’obligatoire
-                else:
-                    node["additionalProperties"] = False
-                    node["required"] = list(node.get("properties", {}).keys())
-                for k, v in node.get("properties", {}).items():
-                    walk(v, f"{path}/{k}")
-            if node.get("type") == "array" and "items" in node:
-                walk(node["items"], f"{path}/items")
-    walk(schema)
-    return schema
-
 output_schema = close_and_require_all(PlannerOutput.model_json_schema())
-
 
 ############################# Definition des agents #############################
 
@@ -104,8 +86,8 @@ async def julia_planner(user_message,
                 "name": "PlannerOutput",
                 "schema": output_schema,
                 "strict": True
-            }
-        },
+                }
+            },
         temperature=0.3,
         top_p=0.9,
         seed = 127,
@@ -114,10 +96,17 @@ async def julia_planner(user_message,
     content = chat_completion.choices[0].message.content.strip() or "{}"
 
     try:
-    # Valide et convertit en instance Pydantic
-        return PlannerOutput.model_validate_json(content)
-    except ValidationError as e:
-        raise e
+        return PlannerOutput.model_validate_json(content)     # Valide et convertit en instance Pydantic
+    except ValidationError :
+        return PlannerOutput(
+            action_type="answer",
+            tools_to_call=[],
+            continue_discussion=True,
+            citations_required=False,
+            exec_required=False,
+            exec_inst="",
+            user_visible_answer=None
+        )
 
 # Executor Agent
 async def julia_executor(exec_inst: str, mcp_server=mcp_server_tool):
@@ -132,7 +121,7 @@ async def julia_executor(exec_inst: str, mcp_server=mcp_server_tool):
 async def julia_escalator(exec_inst: str, mcp_server=mcp_server_escalator):
     async with mcp_server:
         result = await Runner.run(
-            executor_agent,
+            escalator_agent,
             exec_inst
             )
         return result.final_output

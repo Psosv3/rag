@@ -47,3 +47,8 @@ Thumbs.db
 
 requirements(backup).txt
 data/
+
+dev/src/instructions/planner_instruction1.md
+dev/src/instructions/planner_instruction2.md
+dev/src/instructions/planner_instruction3.md
+dev/src/instructions/planner_instruction0.md

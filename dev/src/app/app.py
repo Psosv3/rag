@@ -167,8 +167,14 @@ async def ask_question_public(req: Request,
                               spbase: AsyncClient = Depends(get_supabase),
                               redis: Redis = Depends(get_redis),
                               ):
-    
-    # 0) validate question length
+    # 0) Resolve/create session
+    session = await get_or_create_session(spbase, redis, request.company_id, request.external_user_id)
+    if not isinstance(session, dict) or "session_id" not in session:
+        raise HTTPException(status_code=500, detail="Invalid session object")
+    session_id = session["session_id"]
+
+
+    # 1) validate question length
     reject_question, user_question = validate_question(request.question) # check length abuse
     if reject_question : 
         return sse_data({"answer": "Owh! Vous êtes bien bavard. Je suis désolé, je ne peux accepter que les questions à 1000 caractères maximum.",
@@ -176,12 +182,6 @@ async def ask_question_public(req: Request,
                         "session_id": session_id,
                         "external_user_id": request.external_user_id,
                         })        
-
-    # 1) Resolve/create session
-    session = await get_or_create_session(spbase, redis, request.company_id, request.external_user_id)
-    if not isinstance(session, dict) or "session_id" not in session:
-        raise HTTPException(status_code=500, detail="Invalid session object")
-    session_id = session["session_id"]
 
     # 2) event_stream
     async def event_stream() -> AsyncGenerator[str, None]:
