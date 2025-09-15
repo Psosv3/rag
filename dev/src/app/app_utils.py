@@ -444,8 +444,7 @@ async def escalate_to_humans(conv_history, spbase, session_id, request, langue="
 
 
 def sse_data(payload: dict) -> str:
-    print(f"data: {json.dumps(payload, ensure_ascii=False)}\n\n")
-    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    return f"{json.dumps(payload, ensure_ascii=False)}"
 
 
 async def load_intern_contact(sp: AsyncClient, company_id: str) -> List[Dict[str, Any]]:
