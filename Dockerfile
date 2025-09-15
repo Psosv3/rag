@@ -19,6 +19,8 @@ RUN pip install uv
 
 # Installer les dépendances Python avec environnement virtuel
 RUN uv venv /app/.venv && \
+    /app/.venv/bin/python -m ensurepip --upgrade && \
+    /app/.venv/bin/python -m pip install --upgrade pip && \
     uv pip install --no-cache-dir -r requirements.txt
 
 # Vérifier la version de pip et tester l'installation de numpy
