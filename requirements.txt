@@ -36,3 +36,4 @@ torch
 transformers
 openai-agents
 openai
+google-cloud-translate

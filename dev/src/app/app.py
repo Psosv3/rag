@@ -23,7 +23,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from redis.asyncio import Redis, ConnectionPool
 from supabase import create_async_client, AsyncClient
 # Utilities
-from utils.utils import system_message, safety_post_filter, build_chat_messages, controlled_fallback_response
+from utils.utils import system_message, safety_post_filter, build_chat_messages, controlled_fallback_response, sanitize_translate, translate, dict_abreviation_mg
 from .app_utils import (
     # Constant
     TABLE_SESSION,
@@ -174,7 +174,7 @@ async def ask_question_public(req: Request,
     session_id = session["session_id"]
 
 
-    # 1) validate question length
+    # 1) a) validate question length
     reject_question, user_question = validate_question(request.question) # check length abuse
     if reject_question : 
         return sse_data({"answer": "Owh! Vous êtes bien bavard. Je suis désolé, je ne peux accepter que les questions à 1000 caractères maximum.",
@@ -182,6 +182,11 @@ async def ask_question_public(req: Request,
                         "session_id": session_id,
                         "external_user_id": request.external_user_id,
                         })        
+    # 1) b) sanitize_malagasy_sentence, dict_abreviation_mg
+    if request.langue.lower() in ("malgache", "malagasy","mg"):
+        user_question = await sanitize_translate(user_question.lower(), dict_abreviation_mg, "mg", "fr")
+        print(f"+++ {user_question}")
+    
 
     # 2) event_stream
     async def event_stream() -> AsyncGenerator[str, None]:
@@ -192,7 +197,7 @@ async def ask_question_public(req: Request,
             # 2) Ban check
             if await is_banned(redis, request.company_id, session_id):
                 yield sse_data({
-                    "answer": "Vu.",
+                    "answer": "",
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
@@ -220,7 +225,7 @@ async def ask_question_public(req: Request,
                 user_input=user_question,
                 context=docs,
                 system_message=syst_msg,
-                langue=request.langue,
+                langue= "Français", # initially request.langue,
                 max_history_pairs=30,
             )
 
@@ -241,8 +246,10 @@ async def ask_question_public(req: Request,
 
 
             # 7) Simple branches
-            async def respond_and_log(text: str) -> dict: # Helper to log assistant text
+            async def respond_and_log(text: str, langue : str) -> dict: # Helper to log assistant text
                 safe = safety_post_filter(text)
+                if langue.lower() in ("malgache", "malagasy","mg"):
+                    safe = await translate(safe, "fr", "mg")
                 await save_supabase_message(spbase, session_id, "assistant", safe)
                 return {
                     "answer": safe,
@@ -253,7 +260,7 @@ async def ask_question_public(req: Request,
 
             if planner_out.action_type == "reject":
                 reject = planner_out.user_visible_answer or "Désolé, je ne suis pas en mesure de vous aider sur ce point."
-                yield sse_data(await respond_and_log(reject))
+                yield sse_data(await respond_and_log(reject, request.langue))
                 return
             
             if planner_out.action_type == "clarify":
@@ -261,15 +268,16 @@ async def ask_question_public(req: Request,
                     "D'accord. Mais je ne suis pas sûr de clairement comprendre votre demande. "
                     "Pouvez-vous détailler encore un peu plus svp ?"
                 )
-                yield sse_data(await respond_and_log(clarif))
+                yield sse_data(await respond_and_log(clarif, request.langue))
                 return
             
             if planner_out.action_type == "answer":
                 if not planner_out.user_visible_answer:
                     clarif_bis = "Pouvez-vous me fournir un peu plus de détail svp ?"
-                    yield sse_data(await respond_and_log(clarif_bis))
+                    yield sse_data(await respond_and_log(clarif_bis, request.langue))
                     return
-                yield sse_data(await respond_and_log(planner_out.user_visible_answer))
+                print(f"+++ {planner_out.user_visible_answer}")
+                yield sse_data(await respond_and_log(planner_out.user_visible_answer, request.langue))
                 return
 
             if planner_out.action_type == "escalate":
@@ -277,7 +285,7 @@ async def ask_question_public(req: Request,
                 if await is_ready_to_escalate(redis, request.company_id, session_id):
                     await remove_escalate_session(redis, request.company_id, session_id)
 
-                    await escalate_to_humans(conv_history, spbase, session_id, request, langue=request.langue)
+                    await escalate_to_humans(conv_history, spbase, session_id, request) #, langue=request.langue)
 
                     answer_escalate = "C'est bon! Mon responsable a été informé. Il reviendra vers vous au plus vite."
                     await save_supabase_message(spbase, session_id, "assistant", answer_escalate)
@@ -356,8 +364,8 @@ async def ask_question_public(req: Request,
                     return
 
             # 9) Fallback
-            lang = request.langue or "Français"
-            yield sse_data(await respond_and_log(controlled_fallback_response(lang)))
+            lang = "Français"
+            yield sse_data(await respond_and_log(controlled_fallback_response(lang, request.langue), request.langue))
             return
 
         except Exception as e:
