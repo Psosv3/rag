@@ -25,7 +25,7 @@ mistral_llm = ChatMistralAI(
 
 ###
 planner_model = AsyncGroq(api_key=groq_api_key)
-planner_core_model = "openai/gpt-oss-20b"
+planner_core_model = "openai/gpt-oss-120b"
 
 ###
 executor_model = OpenAIChatCompletionsModel( 

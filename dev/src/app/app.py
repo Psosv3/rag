@@ -233,19 +233,17 @@ async def ask_question_public(req: Request,
 
             # 3) Build messages for LLM/agents
             company_name = await get_company_name(app, request.company_id)
-            syst_msg = system_message(company_name)
+            syst_msg = system_message(company_name, request.langue)
             msgs = build_chat_messages(
                 messages_history=conv_history,
                 user_input=user_question,
                 context=docs,
                 system_message=syst_msg,
-                langue= "Français", # initially request.langue,
+                #langue= "Français", # initially request.langue,
                 max_history_pairs=30,
             )
-
             # 4) Planner
             planner_out: PlannerOutput = await julia_planner(msgs)
-
             if not planner_out.continue_discussion:
                 await forbiden_session(redis, request.company_id, session_id)
                 payload = {

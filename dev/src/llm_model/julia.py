@@ -40,7 +40,7 @@ class ExecutorOutput(BaseModel):
 
 ############################# Instructions planner & executeur #############################
 
-planner_instructions = read_instructions(BASE/"dev/src/instructions/planner_instruction1.md")
+planner_instructions = read_instructions(BASE/"dev/src/instructions/planner_instruction.md")
 
 executor_instructions = (read_instructions(BASE/"dev/src/instructions/executor_instruction.md"))
 

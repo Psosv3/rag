@@ -50,26 +50,40 @@ def maintenant_fr(zone) -> str:
         f"et il est actuellement {dt.hour}h{dt.minute:02d} en France.\n"
     )
 
-def system_message(company_name, instructions = planner_instructions, assistant_name = "Julia de ONEXUS"):
-    syst_msg = f"""\n\n### VOTRE IDENTITE\nVous etes {assistant_name}, une assistante virtuelle senior en support client, qui occupe le rôle de support client en ligne.
-        Vous travaillez pour la société {company_name}. Vous vous comportez comme un humain. {maintenant_fr(ZoneInfo("Europe/Paris"))}
-        Votre tâche aujourd'hui est de répondres aux questions des clients externes de votre organisation {company_name} dans leurs requêtes et leurs questionnements. 
-        Suivez strictement à la lettre toutes les instructions.\n
-        Vous êtes maintenant connecté à un client.\n\n------------------------\n\n
-        """
-    return instructions + syst_msg 
+def system_message(company_name, langue, instructions = planner_instructions, assistant_name = "Julia de ONEXUS"):
+    last_syst_msg = f"""\n
+<identite_et_rappel_regles>
+### IDENTITÉ
+Tu es '{assistant_name}', assistante virtuelle senior en support client.
+Tu représentes la société {company_name}.
+Tu interagis comme un humain professionnel et courtois.
+{maintenant_fr(ZoneInfo("Europe/Paris"))}
+
+### MISSION
+- Répondre uniquement aux clients externes de {company_name}.
+- Objectif : apporter des réponses courtes, exactes, concises, actionnables.
+- Langue de réponse obligatoire : {langue}.
+
+### DIRECTIVES IMPÉRATIVES
+1. Suivre strictement toutes les règles et politiques système (Politique_RAG, Classification_et_verrou_OOS,  Politique_arret_de_discussion, Politique_d_escalade, etc.).
+2. Toujours rester dans le rôle de support client.
+3. Ne jamais ignorer ni adoucir les règles Core_Rules.
+4. Répondre uniquement en {langue}.
+</identite_et_rappel_regles>\n
+    """
+    return instructions + last_syst_msg 
 
 def build_chat_messages(messages_history,           # List[PublicChatMessage] triée chronologiquement
                         user_input: str,            # request.question
                         context : str,              # context RAG
                         system_message: str,        # instructions globales
-                        langue: str = "Français",   # request.langue
+                        #langue: str = "Français",    # request.langue
                         max_history_pairs: int = 30 # garde-fou contexte
                         ):
 
     # 0) System
-    rag_syst_msg = system_message.strip()+ f"###\n\n Voici le contexte contenant les informations de votre entreprise pour répondre à la question du client. \n\n<context_rag>\n\n### CONTEXT RAG ###\n"+ context +"</context_rag>\n\n"
-
+    rag_syst_msg = system_message.strip()+ f"###\n\n Voici le contexte RAG contenant les informations de votre entreprise pour répondre à la question du client. \n\n<context_rag>\n" + context +"\n</context_rag>\n\n"
+    print(f"\n--------------{rag_syst_msg}\n----------------\n")
     messages = [{"role": "system", "content": rag_syst_msg.strip()}]
 
     # 1) Historique récent (on tronque si trop long)
@@ -85,8 +99,7 @@ def build_chat_messages(messages_history,           # List[PublicChatMessage] tr
         # Si tu supportes un jour des messages "tool" persistés, ajoute leur mapping ici.
 
     # 2) Tour courant user
-    user_turn = f"{user_input}\n\nRépondez toujours en {langue}."
-    messages.append({"role": "user", "content": user_turn})
+    messages.append({"role": "user", "content": user_input})
 
     return messages
 
@@ -267,6 +280,14 @@ dict_abreviation_mg = {
     "mora2": "mora-mora",
     
     # Contractions de verbes courants
+    # "ampiana" (aller)
+    "apio": "ampio",
+    "fanapina": "fanampiana",
+    "fanapinao": "fanampianao",
+    "fanampinao": "fanampianao",
+    "fanapinw": "fanampianao",
+    "fanampinw": "fanampianao",
+
     # "mandeha" (aller)
     "nande": "nandeha",
     "nandeh": "nandeha",
@@ -308,10 +329,19 @@ dict_abreviation_mg = {
     
     # Contractions de mots temporels
     # Contractions de --standrad--
-    "amfiry":"amin'ny firy",
-    "amfir":"amin'ny firy",
-    "amifiry":"amin'ny firy",
+    "@":"amin'ny",
+    "am":"amin'ny",
+
+    "rovina":"raoviana",
+    "raoviana":"rahoviana ",
+    "raovina":"rahoviana ",
+
+    "amfiry":"amin'firy",
+    "amfir":"amin'firy",
+    "amifiry":"amin'firy",
+
     "ftona":"fotoana",
+
     "aloloa":"aloha kely",
     "aloa":"aloha",
 
@@ -332,6 +362,10 @@ dict_abreviation_mg = {
     # "inona" (quoi)
     "inon": "inona",
     "in": "inona",
+
+    # "an'ity" 
+    "anty": "an'ity",
+    "ty": "ity",
 
     # "izany"
     "zany": "izany",
@@ -374,14 +408,12 @@ dict_abreviation_mg = {
     "tana": "Antananarivo",
     "tanà": "Antananarivo",
     "tananarivo": "Antananarivo",
+    "tanarivo": "Antananarivo",
     
     # Contractions informelles courantes
     "ko": "koa",
-    
-    "dia": "dia", # déjà court pour "alors/donc"
     "de": "dia",
     "d": "dia",
-    
     "f": "fa",
     
     # Contractions de négations
@@ -402,9 +434,11 @@ dict_abreviation_mg = {
     "vonin'kazo": "voninkazo", # fleur (mot déjà composé)
     "vonikazo": "voninkazo",
     "vonkazo": "voninkazo",
-
     "vokazo": "voankazo",
     "voakazo": "voankazo",
+    "zvtr": "zavatra",
+    "zavatr": "zavatra",
+    "zvtra": "zavatra",
     
     # Pronoms personnels abrégés
     "ah": "aho",
@@ -412,6 +446,7 @@ dict_abreviation_mg = {
     
     # Expressions d'accord/désaccord
     "okay": "eny", # d'accord
+    "raikitra": "ekena",
     "eken": "ekena",
     "ok": "eny", # emprunt
     
@@ -433,4 +468,11 @@ dict_abreviation_mg = {
     # Mots connecteurs
     "kanef": "kanefa", 
     "saing": "saingy",
+}
+
+dict_remplacement_mg = {
+    "mpitantana": "tompon'andraikitra",
+    "olona": "tompon'andraikitra", 
+    "fanatitra" : "serivisy",
+
 }
