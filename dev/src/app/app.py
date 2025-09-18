@@ -185,10 +185,7 @@ async def ask_question_public(req: Request,
     # 1) b) sanitize_malagasy_sentence, dict_abreviation_mg
     if request.langue.lower() in ("malgache", "malagasy","mg"):
         user_question = await sanitize_translate(user_question.lower(), dict_abreviation_mg, "mg", "fr")
-        print(f"+++ {user_question}")
     
-
-
     # 2) event_stream
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
@@ -245,10 +242,10 @@ async def ask_question_public(req: Request,
                 langue= "Français", # initially request.langue,
                 max_history_pairs=30,
             )
-            print(f"-+-+-+{docs}")
+
             # 4) Planner
             planner_out: PlannerOutput = await julia_planner(msgs)
-            print(f"-+-+-+{planner_out}")
+
             if not planner_out.continue_discussion:
                 await forbiden_session(redis, request.company_id, session_id)
                 payload = {
