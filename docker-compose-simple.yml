@@ -24,9 +24,11 @@ services:
       - MAX_UPLOAD_MB=${MAX_UPLOAD_MB}
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/secret_key/vaulted-harbor-471117-v9-98f4eedafa99.json
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      - ./secret_key:/app/secret_key
     ports:
       - "8000:8000"  # API directement accessible
     networks:
