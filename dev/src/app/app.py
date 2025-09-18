@@ -263,7 +263,8 @@ async def ask_question_public(req: Request,
                 safe = safety_post_filter(text)
                 if langue.lower() in ("malgache", "malagasy","mg"):
                     safe = await translate(safe, "fr", "mg")
-                await save_supabase_message(spbase, session_id, "assistant", safe[0])
+                    safe = safe[0]
+                await save_supabase_message(spbase, session_id, "assistant", safe)
                 return {
                     "answer": safe,
                     "company_id": request.company_id,
