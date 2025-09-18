@@ -60,7 +60,7 @@ Tu interagis comme un humain professionnel et courtois.
 {maintenant_fr(ZoneInfo("Europe/Paris"))}
 
 ### MISSION
-- Répondre uniquement aux clients externes de {company_name}.
+- Support client : assister uniquement aux demandes clients en liens avec votre entreprise {company_name}.
 - Objectif : apporter des réponses courtes, exactes, concises, actionnables.
 - Langue de réponse obligatoire : {langue}.
 
@@ -82,8 +82,7 @@ def build_chat_messages(messages_history,           # List[PublicChatMessage] tr
                         ):
 
     # 0) System
-    rag_syst_msg = system_message.strip()+ f"###\n\n Voici le contexte RAG contenant les informations de votre entreprise pour répondre à la question du client. \n\n<context_rag>\n" + context +"\n</context_rag>\n\n"
-    print(f"\n--------------{rag_syst_msg}\n----------------\n")
+    rag_syst_msg = system_message.strip()+ f"###\n\n Voici le contexte RAG contenant des informations de votre entreprise pour répondre à la question du client. \n\n<context_rag>\n" + context +"\n</context_rag>\n\n"
     messages = [{"role": "system", "content": rag_syst_msg.strip()}]
 
     # 1) Historique récent (on tronque si trop long)

@@ -242,6 +242,7 @@ async def ask_question_public(req: Request,
                 #langue= "Français", # initially request.langue,
                 max_history_pairs=30,
             )
+
             # 4) Planner
             planner_out: PlannerOutput = await julia_planner(msgs)
             if not planner_out.continue_discussion:
@@ -257,13 +258,12 @@ async def ask_question_public(req: Request,
                 yield sse_data(payload)
                 return
 
-
             # 5) Simple branches
             async def respond_and_log(text: str, langue : str) -> dict: # Helper to log assistant text
                 safe = safety_post_filter(text)
                 if langue.lower() in ("malgache", "malagasy","mg"):
                     safe = await translate(safe, "fr", "mg")
-                await save_supabase_message(spbase, session_id, "assistant", safe)
+                await save_supabase_message(spbase, session_id, "assistant", safe[0])
                 return {
                     "answer": safe,
                     "company_id": request.company_id,
@@ -306,7 +306,6 @@ async def ask_question_public(req: Request,
                 yield sse_data(ack_payload)
                 return
 
-            
             # 6) Tool branch: ack, run executor with timeout, stream heartbeats
             if planner_out.action_type == "tool":
 
