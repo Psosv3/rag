@@ -188,26 +188,44 @@ async def ask_question_public(req: Request,
         print(f"+++ {user_question}")
     
 
+
     # 2) event_stream
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
-            # 1) Resolve/create session
-                # already done
 
-            # 2) Ban check
+            # 0) Ban check
             if await is_banned(redis, request.company_id, session_id):
                 yield sse_data({
-                    "answer": "",
+                    "answer": None,
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
                 })
                 return
 
-            # 3) Persist user message
+            # 1) Persist user message & load conv history
             await save_supabase_message(spbase, session_id, "user", user_question)
+            conv_history = await list_messages(spbase, session_id, limit=60)
 
-            # 4) RAG context with Redis cache
+            # 1) Prioritize escalate-ready case
+            if await is_ready_to_escalate(redis, request.company_id, session_id):
+                await remove_escalate_session(redis, request.company_id, session_id)
+
+                await escalate_to_humans(conv_history, spbase, session_id, request) #, langue=request.langue)
+
+                answer_escalate = "C'est bon! Mon responsable a été informé. Il reviendra vers vous au plus vite."
+                await save_supabase_message(spbase, session_id, "assistant", answer_escalate)
+
+                escalate_payload = {
+                    "answer": answer_escalate,
+                    "company_id": request.company_id,
+                    "session_id": session_id,
+                    "external_user_id": request.external_user_id,
+                }
+                yield sse_data(escalate_payload)
+                return
+
+            # 2) RAG context with Redis cache
             docs = await get_cached_rag_docs(redis, request.company_id, user_question)
             
             if docs is None:
@@ -216,10 +234,9 @@ async def ask_question_public(req: Request,
                     VECTORSTORES_CACHE[request.company_id] = vectordb
                 await cache_rag_docs(redis, request.company_id, user_question, docs, ttl_seconds=300)
 
-            # 5) Build messages for LLM/agents
+            # 3) Build messages for LLM/agents
             company_name = await get_company_name(app, request.company_id)
             syst_msg = system_message(company_name)
-            conv_history = await list_messages(spbase, session_id, limit=60)
             msgs = build_chat_messages(
                 messages_history=conv_history,
                 user_input=user_question,
@@ -228,9 +245,10 @@ async def ask_question_public(req: Request,
                 langue= "Français", # initially request.langue,
                 max_history_pairs=30,
             )
-
-            # 6) Planner
+            print(f"-+-+-+{docs}")
+            # 4) Planner
             planner_out: PlannerOutput = await julia_planner(msgs)
+            print(f"-+-+-+{planner_out}")
             if not planner_out.continue_discussion:
                 await forbiden_session(redis, request.company_id, session_id)
                 payload = {
@@ -245,7 +263,7 @@ async def ask_question_public(req: Request,
                 return
 
 
-            # 7) Simple branches
+            # 5) Simple branches
             async def respond_and_log(text: str, langue : str) -> dict: # Helper to log assistant text
                 safe = safety_post_filter(text)
                 if langue.lower() in ("malgache", "malagasy","mg"):
@@ -281,39 +299,20 @@ async def ask_question_public(req: Request,
                 return
 
             if planner_out.action_type == "escalate":
-
-                if await is_ready_to_escalate(redis, request.company_id, session_id):
-                    await remove_escalate_session(redis, request.company_id, session_id)
-
-                    await escalate_to_humans(conv_history, spbase, session_id, request) #, langue=request.langue)
-
-                    answer_escalate = "C'est bon! Mon responsable a été informé. Il reviendra vers vous au plus vite."
-                    await save_supabase_message(spbase, session_id, "assistant", answer_escalate)
-
-                    escalate_payload = {
-                        "answer": answer_escalate,
-                        "company_id": request.company_id,
-                        "session_id": session_id,
-                        "external_user_id": request.external_user_id,
-                    }
-                    yield sse_data(escalate_payload)
-                    return
-                
-                else :
-                    await add_escalate_session(redis, request.company_id, session_id)
-                    prep_escalate_resp = random.choice(LIST_ESCALATE_RESP)
-                    await save_supabase_message(spbase, session_id, "assistant", prep_escalate_resp)
-                    ack_payload = {
-                        "answer": prep_escalate_resp,
-                        "company_id": request.company_id,
-                        "session_id": session_id,
-                        "external_user_id": request.external_user_id,
-                    }
-                    yield sse_data(ack_payload)
-                    return
+                await add_escalate_session(redis, request.company_id, session_id)
+                prep_escalate_resp = random.choice(LIST_ESCALATE_RESP)
+                await save_supabase_message(spbase, session_id, "assistant", prep_escalate_resp)
+                ack_payload = {
+                    "answer": prep_escalate_resp,
+                    "company_id": request.company_id,
+                    "session_id": session_id,
+                    "external_user_id": request.external_user_id,
+                }
+                yield sse_data(ack_payload)
+                return
 
             
-            # 8) Tool branch: ack, run executor with timeout, stream heartbeats
+            # 6) Tool branch: ack, run executor with timeout, stream heartbeats
             if planner_out.action_type == "tool":
 
                 temp_resp = random.choice(LIST_TEMP_RESP)
@@ -363,7 +362,7 @@ async def ask_question_public(req: Request,
                     yield sse_data({"error": "Délai dépassé, veuillez réessayer."})
                     return
 
-            # 9) Fallback
+            # 7) Fallback
             lang = "Français"
             yield sse_data(await respond_and_log(controlled_fallback_response(lang, request.langue), request.langue))
             return

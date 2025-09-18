@@ -48,6 +48,4 @@ Thumbs.db
 requirements(backup).txt
 data/
 secret_key/
-
-dev/src/instructions/planner_instruction[0-9]*.md
-!dev/src/instructions/planner_instruction.md
+dev/src/instructions/.old/

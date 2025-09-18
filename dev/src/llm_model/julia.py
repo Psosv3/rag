@@ -40,11 +40,12 @@ class ExecutorOutput(BaseModel):
 
 ############################# Instructions planner & executeur #############################
 
-planner_instructions = read_instructions(BASE/"dev/src/instructions/planner_instruction.md")
+planner_instructions = read_instructions(BASE/"dev/src/instructions/planner_instruction1.md")
 
 executor_instructions = (read_instructions(BASE/"dev/src/instructions/executor_instruction.md"))
 
 escalator_instructions = (read_instructions(BASE/"dev/src/instructions/escalator_instruction.md"))
+
 
 
 ############################# Features additionnels #############################
@@ -88,8 +89,8 @@ async def julia_planner(user_message,
                 "strict": True
                 }
             },
-        temperature=0.3,
-        top_p=0.9,
+        temperature=0.05,
+        top_p=0.95,
         seed = 127,
         stream=False,
     )

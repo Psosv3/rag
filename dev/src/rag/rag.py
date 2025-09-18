@@ -50,9 +50,9 @@ def get_company_index_dir(company_id: str, base_data_dir: str = "data") -> str:
 def create_vectorstore(docs: List[str],
                       *,
                       model: str = "text-embedding-3-large",
-                      splitter_chunk_size: int = 1_024,
-                      splitter_overlap: int = 100,
-                      embed_batch_size: int = 1_024,
+                      splitter_chunk_size: int = 512,
+                      splitter_overlap: int = 256,
+                      embed_batch_size: int = 512,
                       use_hnsw: bool = True,
                       hnsw_m: int = 32,
                       normalise: bool = True,
@@ -176,8 +176,8 @@ def get_rag_context(question: str,
                vectorstores_cache: dict,
                data_dir: str = "data",
                *,
-               k: int = 5,
-               rerank_top_n: int = 3,
+               k: int = 10,
+               rerank_top_n: int = 5,
                ) -> Union[str, Dict[str, Union[str, List[Document]]]]:
     
 
