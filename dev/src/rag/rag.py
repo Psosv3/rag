@@ -131,7 +131,6 @@ def build_index(company_id: str, data_dir: str = "data", HTTPException=None):
         # Répertoire spécifique à l'entreprise
         company_data_dir = get_company_data_dir(company_id, data_dir)
         company_index_dir = get_company_index_dir(company_id, data_dir)
-        
         # Charger les documents de l'entreprise
         docs = load_documents(company_data_dir)
         if not docs:

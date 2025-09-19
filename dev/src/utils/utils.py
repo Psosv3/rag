@@ -148,6 +148,7 @@ def load_documents(data_dir):
             docs.append(read_pdf(fpath))
         elif fname.endswith(".docx"):
             docs.append(read_docx(fpath))
+
     return docs
 
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63}")
