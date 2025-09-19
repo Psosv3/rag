@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
     REDIS_URL: str = os.getenv("REDIS_URL")
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM")
-    JWT_SECRET: str = os.getenv("JWT_SECRET")
+    JWT_SECRET: str = os.getenv("SUPABASE_JWT_SECRET")
     JWT_AUDIENCE: Optional[str] = "authenticated"
     JWT_ISSUER: Optional[str] = None
     ALLOW_ORIGINS: List[AnyHttpUrl] = os.getenv("ALLOW_ORIGINS")
