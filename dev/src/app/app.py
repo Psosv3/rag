@@ -185,6 +185,7 @@ async def ask_question_public(req: Request,
     # 1) b) sanitize_malagasy_sentence, dict_abreviation_mg
     if request.langue.lower() in ("malgache", "malagasy","mg"):
         user_question = await sanitize_translate(user_question.lower(), dict_abreviation_mg, "mg", "fr")
+        print(f"*******\n{user_question}\n*******")
     
     # 2) event_stream
     async def event_stream() -> AsyncGenerator[str, None]:
@@ -233,7 +234,7 @@ async def ask_question_public(req: Request,
 
             # 3) Build messages for LLM/agents
             company_name = await get_company_name(app, request.company_id)
-            syst_msg = system_message(company_name, request.langue)
+            syst_msg = system_message(company_name) #, langue = request.langue)
             msgs = build_chat_messages(
                 messages_history=conv_history,
                 user_input=user_question,
@@ -245,6 +246,7 @@ async def ask_question_public(req: Request,
 
             # 4) Planner
             planner_out: PlannerOutput = await julia_planner(msgs)
+            print(f"-+-+-+-+-+\n{planner_out}\n-+-+-+-+-+")
             if not planner_out.continue_discussion:
                 await forbiden_session(redis, request.company_id, session_id)
                 payload = {
@@ -260,13 +262,13 @@ async def ask_question_public(req: Request,
 
             # 5) Simple branches
             async def respond_and_log(text: str, langue : str) -> dict: # Helper to log assistant text
-                safe = safety_post_filter(text)
+                safe_answer = safety_post_filter(text)
+                await save_supabase_message(spbase, session_id, "assistant", safe_answer)
                 if langue.lower() in ("malgache", "malagasy","mg"):
-                    safe = await translate(safe, "fr", "mg")
-                    safe = safe[0]
-                await save_supabase_message(spbase, session_id, "assistant", safe)
+                    safe_answer = await translate(safe_answer, "fr", "mg")
+                    safe_answer = safe_answer[0]
                 return {
-                    "answer": safe,
+                    "answer": safe_answer,
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,

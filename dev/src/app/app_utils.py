@@ -397,44 +397,44 @@ async def escalate_to_humans(conv_history, spbase, session_id, request, langue="
     list_contact = await load_intern_contact(spbase, request.company_id)
 
     escalate_msg_inst = f"""
-    ### CONTEXTE
-    Votre discussion courante avec le client nécessite une escalade humaine.
-    Exécutez la tâche en utilisant l'outil tool='escalate_to_humans'.
-    Date et heure de la demande : {maintenant_fr(ZoneInfo("Europe/Paris"))}
+### CONTEXTE
+Votre discussion courante avec le client nécessite une escalade humaine.
+Exécutez la tâche en utilisant l'outil tool='escalate_to_humans'.
+Date et heure de la demande : {maintenant_fr(ZoneInfo("Europe/Paris"))}
 
-    Voici l'historique de votre conversation (assistant = vous ; user = client) :
+Voici l'historique de votre conversation:
 
-    ----------------------------------------------------------------------------
-    {escalate_conv_hist.replace("assistant","Vous ").replace("user","Le client ")}
-    ----------------------------------------------------------------------------
+----------------------------------------------------------------------------
+{escalate_conv_hist.replace("assistant","Vous ").replace("user","Le client ")}
+----------------------------------------------------------------------------
 
-    ### TACHE
-    A partir de l'historique de votre conversation  :
-    1) Identifiez le Nom du client : l'insérer dans le paramètre "nom_du_client" du tool.
-    2) Identifiez le contact du client : l'insérer dans le paramètre "contact_du_client" du tool
-    3) Veuillez faire une synthèse claire, concise et auto-suffisante de la conversation et l'insérer dans le paramètre "synthèse_situation" du tool.
-    4) Veuillez en faire également un résumé détaillé et l'insérer dans le paramètre "résumé_détaillé" du tool:
-        - Objectif du client
-        - Description du problème du client
-        - Éléments clés
-        - Tentatives de résolution réalisées
-        - Points d'attention
-    5) L'ID de session du client est {session_id} : à reseigner dans le paramètre "session_id_client" du tool.
+### TACHE
+A partir de l'historique de votre conversation  :
+1) Identifiez le Nom du client : l'insérer dans le paramètre "nom_du_client" du tool.
+2) Identifiez le contact du client : l'insérer dans le paramètre "contact_du_client" du tool
+3) Veuillez faire une synthèse claire, concise et auto-suffisante de la conversation et l'insérer dans le paramètre "synthèse_situation" du tool.
+4) Veuillez en faire également un résumé détaillé et l'insérer dans le paramètre "résumé_détaillé" du tool:
+    - Objectif du client
+    - Description du problème du client
+    - Éléments clés
+    - Tentatives de résolution réalisées
+    - Points d'attention
+5) L'ID de session du client est {session_id} : à reseigner dans le paramètre "session_id_client" du tool.
 
-    ### CONTRAINTES
-    Veillez à renseigner tous les paramètres requis par l'outil : aucun paramètre vide.
-    Toujours répondre et exécuter les tâches en {langue}.\n
-    """
+### CONTRAINTES
+Veillez à renseigner tous les paramètres requis par l'outil : aucun paramètre vide.
+Toujours répondre et exécuter les tâches en {langue}.\n
+"""
 
     list_contact_msg = f"""
-    ### LISTE DES CONTACTS INTERNES
-    Voici la liste des contacts privés dans votre entreprise pour alimenter les paramètres "nom_du_responsable_humain" et "adresse_email_destinataire".
-    Choisissez la meilleure personne en fonction de son poste et de sa description :
+### LISTE DES CONTACTS INTERNES
+Voici la liste des contacts privés dans votre entreprise pour alimenter les paramètres "nom_du_responsable_humain" et "adresse_email_destinataire".
+Choisissez la meilleure personne en fonction de son poste et de sa description :
 
-    <list_contact>
-    {list_contact}
-    </list_contact>
-    """
+<list_contact>
+{list_contact}
+</list_contact>
+"""
 
     input_escalate = escalate_msg_inst + list_contact_msg
     print(input_escalate)

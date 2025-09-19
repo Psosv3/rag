@@ -53,3 +53,19 @@
   "external_user_id": "string",
   "langue": "Malgache"
 }
+
+{
+  "question": "Salama tompoko, mba raha rendez-vous svp",
+  "company_id": "b28cfe88-807b-49de-97f7-fd974cfd0d17",
+  "session_id": "string",
+  "external_user_id": "test_gasy5",
+  "langue": "Malgache"
+}
+
+{
+  "question": "@alatsinainy ho avy izao, @10h, hiresaka momban'ny fanadiovana trano, madassur.mg@gmail.com",
+  "company_id": "b28cfe88-807b-49de-97f7-fd974cfd0d17",
+  "session_id": "string",
+  "external_user_id": "test_gasy6",
+  "langue": "Malgache"
+}
