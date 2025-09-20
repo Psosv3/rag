@@ -32,9 +32,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     SUPABASE_URL: str = os.getenv("SUPABASE_URL")
     SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    SUPABASE_JWT_SECRET: str = os.getenv("SUPABASE_JWT_SECRET")    
     REDIS_URL: str = os.getenv("REDIS_URL")
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM")
-    JWT_SECRET: str = os.getenv("JWT_SECRET")
     JWT_AUDIENCE: Optional[str] = "authenticated"
     JWT_ISSUER: Optional[str] = None
     ALLOW_ORIGINS: List[AnyHttpUrl] = os.getenv("ALLOW_ORIGINS")
@@ -61,6 +61,7 @@ TABLE_SESSION = "public_chat_sessions"
 TABLE_MESSAGE = "public_chat_messages"
 TABLE_COMPANY = "companies"
 TABLE_CONTACTS = "contacts"
+TABLE_USER_PROFILES = "user_profiles"
 TOOL_SEND_EMAIL= "smtp_email_sender"
 
 ###################################################### Other consts : Keys and helpers ######################################################
@@ -106,7 +107,7 @@ async def get_redis() -> Redis:
 
 
 ###################################################### Security (JWT) ######################################################
-security = HTTPBearer(auto_error=True)
+security = HTTPBearer()
 
 def decode_jwt_token(token: str) -> dict:
     options = {"verify_signature": True, "verify_exp": True}
@@ -115,10 +116,10 @@ def decode_jwt_token(token: str) -> dict:
         decode_kwargs["audience"] = settings.JWT_AUDIENCE
     if settings.JWT_ISSUER:
         decode_kwargs["issuer"] = settings.JWT_ISSUER
-    payload = jwt.decode(token, settings.JWT_SECRET, **decode_kwargs)
+    payload = jwt.decode(token, settings.SUPABASE_JWT_SECRET, **decode_kwargs)
     return payload
 
-async def get_current_user(credentials: Annotated[HTTPAuthorizationCredentials, Security(security)]) -> AuthUser:
+async def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)) -> AuthUser:
     if credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid auth scheme")
     try:
@@ -128,12 +129,19 @@ async def get_current_user(credentials: Annotated[HTTPAuthorizationCredentials, 
     sub = payload.get("sub") or payload.get("user_id")
     if not sub:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing sub claim")
-    return AuthUser(
+    spbase: AsyncClient = request.app.state.spbase
+    response = await spbase.table(TABLE_USER_PROFILES) \
+                  .select("company_id,role") \
+                  .eq("user_id", sub) \
+                  .execute()
+    current_user = AuthUser(
         sub=sub,
-        company_id=payload.get("company_id"),
-        role=payload.get("role") or payload.get("app_role"),
+        company_id=response.data[0]["company_id"],
+        role=response.data[0]["role"],
         email=payload.get("email"),
     )
+
+    return current_user
 
 ###################################################### Supabase ######################################################
 async def get_supabase(request: Request) -> AsyncClient:
