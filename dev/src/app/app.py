@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 # FastAPI
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Request, status, Security
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 # Pydantic
 from pydantic import BaseModel, AnyHttpUrl
@@ -232,7 +232,7 @@ async def ask_question_public(req: Request,
                 if request.company_id not in VECTORSTORES_CACHE:
                     VECTORSTORES_CACHE[request.company_id] = vectordb
                 await cache_rag_docs(redis, request.company_id, user_question, docs, ttl_seconds=300)
-            #print(f"++++ docs dans app.py \n{docs}\n")
+            print(f"++++ docs dans app.py \n{docs}\n")
             # 3) Build messages for LLM/agents
             company_name = await get_company_name(app, request.company_id)
             syst_msg = system_message(company_name) #, langue = request.langue)
@@ -247,16 +247,18 @@ async def ask_question_public(req: Request,
 
             # 4) Planner
             planner_out: PlannerOutput = await julia_planner(msgs)
-            #print(f"++++ planner_out dans app.py \n{planner_out}\n")
+            print(f"++++ planner_out dans app.py \n{planner_out}\n")
             if not planner_out.continue_discussion:
                 await forbiden_session(redis, request.company_id, session_id)
+                answer_mg = "Tena miala tsiny indrindra tompoko, voatery aho hamarana ny resantsika eto. Mankasitraka indrindra dia mirary soa."
+                answer_fr = "Je conclus ici pour aujourd'hui, en vous remerciant chaleureusement. Prenez bien soin de vous. :)"
                 payload = {
-                    "answer": "Je conclus ici pour aujourd'hui, en vous remerciant chaleureusement. Prenez bien soin de vous. :)",
+                    "answer": answer_mg if request.langue.lower() == "malgache" else answer_fr,
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
                 }
-                await save_supabase_message(spbase, session_id, "assistant", payload["answer"])
+                await save_supabase_message(spbase, session_id, "assistant", answer_fr)
                 await log_audit(redis, {"type": "planner_block", "session_id": session_id, "company_id": request.company_id})
                 yield sse_data(payload)
                 return
@@ -343,6 +345,7 @@ async def ask_question_public(req: Request,
                     # Completed
                     result = await asyncio.wait_for(task, timeout=None)
                     final_text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+                    print(f"%%%% final_text dans app.py : {final_text}")
                     safe_final = safety_post_filter(final_text)
                     await save_supabase_message(spbase, session_id, "assistant", safe_final)
                     final_payload = {

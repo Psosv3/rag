@@ -385,8 +385,9 @@ async def run_executor_agent(supabase,
         if verif :
             exec_instruct = strip_emails(exec_instruct) + f"\n\n### LISTE DES CONTACTS INTERNES ###\n\nVoici la liste des contacts privés dans votre entreprise. Ne l'utilisez que si vous en avez besoin, comme contacter un responsable ou envoyer un email par exemple. Choisissez bien convenablement la bonne personne en fonction de son poste et de sa description de poste. Attention, le rôle peut ne pas correspondre exactement à ce que vous cherchez. Se référer plutôt à la descritption du poste pour le choix de la meilleure personne : \n\n<list_contact>\n"+ str(list_contact) +"\n</list_contact>\n\n"
         else :
-            await save_supabase_message(supabase, session_id, "assistant", f"Je suis désolé, je me rends compte que je ne suis pas autorisé à envoyer l'email au destinataire : {', '.join(intru for intru in list_intrus)}.")
-            return
+            denied_answer = f"Je suis désolé, je me rends compte que je ne suis pas autorisé à envoyer l'email au destinataire : {', '.join(intru for intru in list_intrus)}."
+            await save_supabase_message(supabase, session_id, "assistant", denied_answer)
+            return denied_answer
 
     out = await julia_executor(exec_instruct)
     try :
@@ -397,6 +398,7 @@ async def run_executor_agent(supabase,
         return return_reponse
     except Exception as e:
         print(f"Erreur output julia: {e}")
+        return "Je suis désolé, j'ai rencontré une petite déconnexion. Pourriez-vous répéter ?"
 
 
 async def escalate_to_humans(conv_history, spbase, session_id, request, langue="Français"):
@@ -452,7 +454,7 @@ Choisissez la meilleure personne en fonction de son poste et de sa description :
 
 
 def sse_data(payload: dict) -> str:
-    return f"{json.dumps(payload, ensure_ascii=False)}"
+    return f"{json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 async def load_intern_contact(sp: AsyncClient, company_id: str) -> List[Dict[str, Any]]:
