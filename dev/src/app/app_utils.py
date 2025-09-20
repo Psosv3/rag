@@ -454,7 +454,7 @@ Choisissez la meilleure personne en fonction de son poste et de sa description :
 
 
 def sse_data(payload: dict) -> str:
-    return f"{json.dumps(payload, ensure_ascii=False)}\n\n"
+    return f"data:{json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 async def load_intern_contact(sp: AsyncClient, company_id: str) -> List[Dict[str, Any]]:
