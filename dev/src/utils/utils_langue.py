@@ -73,9 +73,9 @@ dict_abreviation_mg = {
     "mis": "misy",
     "oe":"hoe",
     "oa":"hoy aho",
-    "aaa":"non",
-    "a a a" :"non",
-    "a3":"non",
+    "aaa":"tsia",
+    "a a a" :"tsia",
+    "a3":"tsia",
     "oka le":"wow",
     "rah":"raha",
     "ra":"raha",
@@ -93,7 +93,7 @@ dict_abreviation_mg = {
     # Contractions de "mora-mora"
     "moramora": "mora-mora",
     "mora2": "mora-mora",
-    
+
     # Contractions de verbes courants
     # "ampiana" (aller)
     "apio": "ampio",

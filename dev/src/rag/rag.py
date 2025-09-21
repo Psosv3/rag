@@ -50,8 +50,8 @@ def get_company_index_dir(company_id: str, base_data_dir: str = "data") -> str:
 def create_vectorstore(docs: List[str],
                       *,
                       model: str = "text-embedding-3-large",
-                      splitter_chunk_size: int = 1_024,
-                      splitter_overlap: int = 128,
+                      splitter_chunk_size: int = 256,
+                      splitter_overlap: int = 64,
                       embed_batch_size: int = 256,
                       use_hnsw: bool = True,
                       hnsw_m: int = 32,
@@ -107,7 +107,9 @@ def create_vectorstore(docs: List[str],
 
     index.add(vecs_np)
 
-    ids = [str(uuid.uuid4()) for _ in documents]
+    ids = [f"{d.metadata['source_id']}:{d.metadata['chunk_id']}" for d in documents]
+    for d in documents :
+        print(f" check ids in rag.py : {d.metadata['source_id']}:{d.metadata['chunk_id']}")
     docstore = InMemoryDocstore(dict(zip(ids, documents)))
     index_to_docstore_id = {i: doc_id for i, doc_id in enumerate(ids)}
 
@@ -170,13 +172,50 @@ def get_or_load_vectorstore(company_id: str, vectorstores_cache : dict, data_dir
     return None
 
 
+def augment_chunks(docs, vectorstore : FAISS, window=1):
+
+    augmented = []
+    seen = set()
+
+    for d in docs:
+        source = d.metadata.get("source_id")
+        chunk_id = d.metadata.get("chunk_id")
+
+        # Avoid reprocessing the same doc
+        if (source, chunk_id) in seen:
+            continue
+        seen.add((source, chunk_id))
+
+        # Collect neighbors
+        merged_texts = []
+        for offset in range(1, window + 1):
+            prev_id = chunk_id - offset
+            next_id = chunk_id + offset
+
+            for neighbor_id in range(prev_id, next_id+1):
+                try:
+                    neighbor = vectorstore.docstore.search(f"{int(source)}:{int(neighbor_id)}")
+                    if neighbor:
+                        merged_texts.append(neighbor.page_content)
+                except:
+                    pass
+
+        # Merge and truncate
+        merged_text = "\n\n".join(merged_texts)
+
+        new_doc = Document(page_content=merged_text, metadata=d.metadata)
+        augmented.append(new_doc)
+
+    return augmented
+
+
 def get_rag_context(question: str,
                company_id: str,
                vectorstores_cache: dict,
                data_dir: str = "data",
                *,
                k: int = 10,
-               rerank_top_n: int = 5,
+               rerank_top_n: int = 3,
                ) -> Union[str, Dict[str, Union[str, List[Document]]]]:
     
 
@@ -205,14 +244,13 @@ def get_rag_context(question: str,
     vectordb = get_or_load_vectorstore(company_id, vectorstores_cache, data_dir)
     if vectordb is None:
         raise ValueError(f"Aucun index trouvé pour l'entreprise {company_id}. Veuillez d'abord construire l'index.")
-    
     retriever = vectordb.as_retriever()
 
     # 1. Top-K retrieval (vector)
     retriever.search_kwargs["k"] = k
 
     # 2. Rerank using FlashRank (French-compatible)
-    flashrank_model = "ms-marco-TinyBERT-L-2-v2" # "bce-reranker-base_v1"  # Multilingual
+    flashrank_model = "ms-marco-MultiBERT-L-12" #"ms-marco-TinyBERT-L-2-v2" # "bce-reranker-base_v1"  # Multilingual
     client_ranker = Ranker(model_name=flashrank_model)
     compressor = FlashrankRerank(client=client_ranker, top_n=rerank_top_n)
     compression_retriever = ContextualCompressionRetriever(
@@ -222,7 +260,9 @@ def get_rag_context(question: str,
 
     # 3. return the retrieved context
     docs = compression_retriever.invoke(question) #get_relevant_documents
-    return (vectordb, "\n\n".join(d.page_content for d in docs))
+    # 4. Expand each doc with neighbors
+    augmented_docs = augment_chunks(docs, vectordb)
+    return (vectordb, "\n\n".join(d.page_content for d in augmented_docs))
 
 
 def clear_company_cache(company_id: str, vectorstores_cache : dict):

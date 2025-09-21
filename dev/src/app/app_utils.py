@@ -298,6 +298,19 @@ async def get_cached_rag_docs(r: Redis, company_id: str, question: str) -> Optio
     raw = await r.get(key)
     return json.loads(raw) if raw else None
 
+async def clear_all_cached_rag_docs(redis, company_id: str) -> int:
+    """
+    Supprime tous les caches RAG d'une entreprise (toutes questions).
+    Retourne le nombre de clés supprimées.
+    """
+    pattern = RAG_CTX_KEY.format(company_id=company_id, qhash="*")
+    deleted = 0
+    async for key in redis.scan_iter(match=pattern):
+        deleted += await redis.unlink(key)
+    return deleted
+
+
+
 ###################################################### Keys and helpers ######################################################
 def qhash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
@@ -454,7 +467,7 @@ Choisissez la meilleure personne en fonction de son poste et de sa description :
 
 
 def sse_data(payload: dict) -> str:
-    return f"data:{json.dumps(payload, ensure_ascii=False)}\n\n"
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 async def load_intern_contact(sp: AsyncClient, company_id: str) -> List[Dict[str, Any]]:

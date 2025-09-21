@@ -60,6 +60,7 @@ from .app_utils import (
     add_escalate_session,
     remove_escalate_session,
     is_ready_to_escalate,
+    clear_all_cached_rag_docs,
     )
 # rag & models
 from rag.rag import get_rag_context, rebuild_company_index, build_index, get_company_data_dir, get_company_stats, clear_company_cache
@@ -100,7 +101,7 @@ app.router.lifespan_context = lifespan
 ###################################################### CORS ######################################################
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOW_ORIGINS,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
@@ -118,6 +119,7 @@ async def refresh_companies():
 async def upload_file(file: UploadFile = File(...),
                       background_tasks: BackgroundTasks = None,
                       current_user: AuthUser = Depends(get_current_user),
+                      redis: Redis = Depends(get_redis),
                       ):
     """Endpoint pour uploader un fichier PDF ou DOCX pour l'entreprise de l'utilisateur."""
 
@@ -141,6 +143,7 @@ async def upload_file(file: UploadFile = File(...),
 
     if background_tasks:
         await refresh_companies_into_state(app)
+        await clear_all_cached_rag_docs(redis, company_id)
         background_tasks.add_task(rebuild_company_index, company_id, DATA_DIR, HTTPException)
 
     return {
@@ -151,8 +154,11 @@ async def upload_file(file: UploadFile = File(...),
 
 
 @app.post("/build_index/")
-async def express_build_index(current_user: AuthUser = Depends(get_current_user)):
+async def express_build_index(current_user: AuthUser = Depends(get_current_user),
+                              redis: Redis = Depends(get_redis),
+                              ):
     try:
+        await clear_all_cached_rag_docs(redis, current_user.company_id)
         build_index(current_user.company_id, DATA_DIR, HTTPException)
         return {
             "message": f"Index construit avec succès pour l'entreprise {current_user.company_id}",
@@ -186,7 +192,6 @@ async def ask_question_public(req: Request,
     # 1) b) sanitize_malagasy_sentence, dict_abreviation_mg
     if request.langue.lower() in ("malgache", "malagasy","mg"):
         user_question = await sanitize_translate(user_question.lower(), dict_abreviation_mg, "mg", "fr")
-        print(f"*******\n{user_question}\n*******")
     
     # 2) event_stream
     async def event_stream() -> AsyncGenerator[str, None]:
@@ -232,7 +237,7 @@ async def ask_question_public(req: Request,
                 if request.company_id not in VECTORSTORES_CACHE:
                     VECTORSTORES_CACHE[request.company_id] = vectordb
                 await cache_rag_docs(redis, request.company_id, user_question, docs, ttl_seconds=300)
-            print(f"++++ docs dans app.py \n{docs}\n")
+
             # 3) Build messages for LLM/agents
             company_name = await get_company_name(app, request.company_id)
             syst_msg = system_message(company_name) #, langue = request.langue)
@@ -247,7 +252,7 @@ async def ask_question_public(req: Request,
 
             # 4) Planner
             planner_out: PlannerOutput = await julia_planner(msgs)
-            print(f"++++ planner_out dans app.py \n{planner_out}\n")
+
             if not planner_out.continue_discussion:
                 await forbiden_session(redis, request.company_id, session_id)
                 answer_mg = "Tena miala tsiny indrindra tompoko, voatery aho hamarana ny resantsika eto. Mankasitraka indrindra dia mirary soa."
@@ -295,7 +300,6 @@ async def ask_question_public(req: Request,
                     clarif_bis = "Pouvez-vous me fournir un peu plus de détail svp ?"
                     yield sse_data(await respond_and_log(clarif_bis, request.langue))
                     return
-                print(f"+++ {planner_out.user_visible_answer}")
                 yield sse_data(await respond_and_log(planner_out.user_visible_answer, request.langue))
                 return
 
