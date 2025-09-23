@@ -108,8 +108,6 @@ def create_vectorstore(docs: List[str],
     index.add(vecs_np)
 
     ids = [f"{d.metadata['source_id']}:{d.metadata['chunk_id']}" for d in documents]
-    for d in documents :
-        print(f" check ids in rag.py : {d.metadata['source_id']}:{d.metadata['chunk_id']}")
     docstore = InMemoryDocstore(dict(zip(ids, documents)))
     index_to_docstore_id = {i: doc_id for i, doc_id in enumerate(ids)}
 

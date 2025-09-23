@@ -137,7 +137,7 @@ async def upload_file(file: UploadFile = File(...),
     company_dir = DATA_DIR / ("company_"+company_id)
     company_dir.mkdir(parents=True, exist_ok=True)
 
-    safe_name = sanitize_filename(file.filename) #rename the file
+    safe_name = file.filename # TODO : sanitize_filename(file.filename) 
     destination = company_dir / safe_name
     await safe_write_file(destination, file, settings.MAX_UPLOAD_MB * 1024 * 1024)
 
@@ -453,8 +453,9 @@ async def delete_document(
             raise HTTPException(status_code=400, detail="Seuls les fichiers PDF et DOCX peuvent être supprimés")
 
         os.remove(file_path)
-        background_tasks.add_task(rebuild_company_index, company_id, DATA_DIR, HTTPException)
-
+        if os.listdir(company_data_dir):
+            background_tasks.add_task(rebuild_company_index, company_id, DATA_DIR, HTTPException)
+        
         return {
             "message": f"Document {filename} supprimé avec succès",
             "company_id": company_id,
