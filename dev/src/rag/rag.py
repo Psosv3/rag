@@ -13,7 +13,7 @@ from langchain_community.docstore.in_memory import InMemoryDocstore
 from flashrank import Ranker
 from langchain_community.document_compressors import FlashrankRerank
 from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
-from utils.utils import load_documents
+from utils.utils import load_documents, split_documents
 
 # Load environment variables
 load_dotenv()
@@ -49,6 +49,7 @@ def get_company_index_dir(company_id: str, base_data_dir: str = "data") -> str:
 
 def create_vectorstore(docs: List[str],
                       *,
+                      augment_rag : bool = True,
                       model: str = "text-embedding-3-large",
                       splitter_chunk_size: int = 256,
                       splitter_overlap: int = 64,
@@ -63,10 +64,10 @@ def create_vectorstore(docs: List[str],
     Create and optionally persist a FAISS vector index from document strings.
     """
     if not docs or all(not d.strip() for d in docs):
-        raise ValueError("No non-empty documents provided.")
+        raise ValueError("Empty documents provided.")
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=splitter_chunk_size,
+        chunk_size=1_000_000 if augment_rag else splitter_chunk_size,
         chunk_overlap=splitter_overlap,
         separators=["\n\n", "\n", ".", " ", ""],
     )
@@ -75,6 +76,7 @@ def create_vectorstore(docs: List[str],
     for src_id, raw in enumerate(docs):
         if not raw.strip():
             continue
+
         for chunk_id, chunk in enumerate(splitter.split_text(raw)):
             meta = {"source_id": src_id, "chunk_id": chunk_id}
             documents.append(Document(page_content=chunk, metadata=meta))
@@ -124,23 +126,24 @@ def create_vectorstore(docs: List[str],
 
     return vectordb
 
-def build_index(company_id: str, data_dir: str = "data", HTTPException=None):
+def build_index(company_id: str, data_dir: str = "data", augment_rag : bool = True, HTTPException=None):
     """Builds the vectorstore index from documents for a specific company."""
 
     try:
         # Répertoire spécifique à l'entreprise
         company_data_dir = get_company_data_dir(company_id, data_dir)
         company_index_dir = get_company_index_dir(company_id, data_dir)
-        # Charger les documents de l'entreprise
-        docs = load_documents(company_data_dir)
-        if not docs:
+        
+        docs = load_documents(company_data_dir) # Charger les documents de l'entreprise : return = list[doc1_str, docs2_str, ...]
+        split_docs = split_documents(docs)
+        if not split_docs:
             if HTTPException:
                 raise HTTPException(status_code=400, detail=f"Aucun document trouvé pour l'entreprise {company_id}")
             else:
                 raise ValueError(f"Aucun document trouvé pour l'entreprise {company_id}")
         
         # Créer le vectorstore avec persistance
-        vectordb = create_vectorstore(docs, persist_dir=company_index_dir)
+        vectordb = create_vectorstore(split_docs, persist_dir=company_index_dir)
         return vectordb
     
     except Exception as e:

@@ -3,7 +3,7 @@ from agents import OpenAIChatCompletionsModel
 from agents import AsyncOpenAI as AgentsAsyncOpenAI 
 from groq import AsyncGroq
 from agents.mcp  import MCPServerSse
-from langchain_mistralai.chat_models import ChatMistralAI
+from mistralai import Mistral
 import os
 from dotenv import load_dotenv
 
@@ -17,15 +17,12 @@ mistral_api_key = os.getenv("MISTRAL_API_KEY")
 groq_api_key = os.getenv("GROQ_API_KEY")
 
 ###
-mistral_llm = ChatMistralAI(
-    api_key=mistral_api_key,
-    model="mistral-small-latest",
-    temperature=0.7,
-)
+client_mistral = Mistral(api_key=mistral_api_key)
+mistral_llm = "mistral-small-latest"
 
 ###
 planner_model = AsyncGroq(api_key=groq_api_key)
-planner_core_model = "openai/gpt-oss-20b"
+planner_core_model = "openai/gpt-oss-120b"
 
 ###
 executor_model = OpenAIChatCompletionsModel( 

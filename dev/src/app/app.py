@@ -61,6 +61,7 @@ from .app_utils import (
     remove_escalate_session,
     is_ready_to_escalate,
     clear_all_cached_rag_docs,
+    safe_write_augmented_file,
     )
 # rag & models
 from rag.rag import get_rag_context, rebuild_company_index, build_index, get_company_data_dir, get_company_stats, clear_company_cache
@@ -117,10 +118,8 @@ async def refresh_companies():
 
 @app.post("/upload/")
 async def upload_file(file: UploadFile = File(...),
-                      background_tasks: BackgroundTasks = None,
                       current_user: AuthUser = Depends(get_current_user),
-                      redis: Redis = Depends(get_redis),
-                      ):
+                      augment_rag : bool = True):
     """Endpoint pour uploader un fichier PDF ou DOCX pour l'entreprise de l'utilisateur."""
 
     ext = Path(file.filename).suffix.lower()
@@ -139,12 +138,14 @@ async def upload_file(file: UploadFile = File(...),
 
     safe_name = file.filename # TODO : sanitize_filename(file.filename) 
     destination = company_dir / safe_name
-    await safe_write_file(destination, file, settings.MAX_UPLOAD_MB * 1024 * 1024)
 
-    if background_tasks:
-        await refresh_companies_into_state(app)
-        await clear_all_cached_rag_docs(redis, company_id)
-        background_tasks.add_task(rebuild_company_index, company_id, DATA_DIR, HTTPException)
+    if augment_rag:
+        try:
+            await safe_write_augmented_file(file, destination)
+        except:
+            await safe_write_file(destination, file, settings.MAX_UPLOAD_MB * 1024 * 1024)
+    else :
+        await safe_write_file(destination, file, settings.MAX_UPLOAD_MB * 1024 * 1024)
 
     return {
         "message": f"file {safe_name} uploaded",

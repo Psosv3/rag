@@ -12,6 +12,9 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo 
 import re
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from .google_translator import translate
 from .utils_langue import dict_remplacement_mg, dict_abreviation_mg
 #---------------------------------
@@ -121,11 +124,8 @@ def controlled_fallback_response(lang: str) -> str:
 def read_pdf(file_path):
     """Reads a PDF file and returns its text content."""
     try:
-        reader = PdfReader(file_path)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() or ""
-        return text
+        reader = PdfReader(str(file_path))
+        return "".join(page.extract_text() or "" for page in reader.pages)
     except Exception as e:
         print(f"Erreur lors de la lecture du PDF {file_path}: {str(e)}")
         return ""
@@ -133,7 +133,7 @@ def read_pdf(file_path):
 def read_docx(file_path):
     """Reads a DOCX file and returns its text content."""
     try:
-        doc = docx.Document(file_path)
+        doc = docx.Document(str(file_path))
         return "\n".join([p.text for p in doc.paragraphs])
     except Exception as e:
         print(f"Erreur lors de la lecture du DOCX {file_path}: {str(e)}")
@@ -183,3 +183,49 @@ async def sanitize_translate(phrase, dictionnaire, from_source, to_target):
     #translate franch
     rslt = await translate(phrase, from_source, to_target)
     return rslt[0]
+
+
+def split_documents(docs: List[str], delimiter: str = "<!--|||SECTION|||-->") -> List[str]:
+    """
+    Split une liste de documents à partir d'un délimiteur
+    et retourne une liste unique de sous-parties nettoyées.
+
+    :param docs: Liste de textes (chaque élément est un document)
+    :param delimiter: La chaîne de délimitation
+    :return: Liste de toutes les sous-parties
+    """
+    results = []
+    for doc in docs:
+        parts = doc.split(delimiter)
+        results.extend(p.strip() for p in parts if p.strip())
+    return results
+
+
+def save_to_pdf(text: str, filename: str):
+
+    doc = SimpleDocTemplate(filename, pagesize=A4)
+    styles = getSampleStyleSheet()
+    story = []
+
+    # Chaque paragraphe du texte est séparé par une ligne vide
+    for paragraph in text.split("\n"):
+        if paragraph.strip():
+            story.append(Paragraph(paragraph, styles["Normal"]))
+            story.append(Spacer(1, 12))  # espace entre les paragraphes
+
+    doc.build(story)
+
+
+def save_to_docx(text: str, filename: str):
+
+    doc = docx.Document()
+
+    # Chaque ligne séparée par \n devient un paragraphe Word
+    for paragraph in text.split("\n"):
+        if paragraph.strip():  # évite les paragraphes vides multiples
+            doc.add_paragraph(paragraph.strip())
+        else:
+            doc.add_paragraph("")  # garder les sauts de ligne vides
+
+    doc.save(filename)
+

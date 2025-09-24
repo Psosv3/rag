@@ -8,6 +8,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Any, Dict, Optional, Annotated
 from operator import itemgetter
+from io import BytesIO
+import docx
+from PyPDF2 import PdfReader
 from dotenv import load_dotenv
 # FastAPI
 from fastapi import FastAPI, Depends, UploadFile, HTTPException, Request, status, Security
@@ -22,8 +25,10 @@ from supabase import AsyncClient
 import jwt
 # Models
 from llm_model.julia import julia_executor, julia_escalator
+from llm_model.model_utils import rewrite_rag_augmentor
 # Utils
-from utils.utils import extract_emails, extract_intern_emails, check_difference, strip_emails, maintenant_fr, ZoneInfo
+from utils.utils import read_pdf, read_docx, save_to_pdf, save_to_docx, extract_emails, extract_intern_emails, check_difference, strip_emails, maintenant_fr, ZoneInfo
+
 
 ###################################################### Class definitions ######################################################
 load_dotenv()
@@ -480,3 +485,24 @@ async def load_intern_contact(sp: AsyncClient, company_id: str) -> List[Dict[str
                   .eq("company_id", company_id) \
                   .execute()
     return res.data or []
+
+async def safe_write_augmented_file(file: UploadFile, destination: Path):
+    ext = Path(file.filename).suffix.lower()
+    content = await file.read()  # read entire file into memory
+
+    if ext == ".pdf":
+        original_text = "".join(page.extract_text() or "" for page in PdfReader(BytesIO(content)).pages)
+    elif ext == ".docx":
+        original_text = "\n".join(p.text for p in docx.Document(BytesIO(content)).paragraphs)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported file extension: {ext}")
+
+    if not original_text.strip():
+        raise HTTPException(status_code=422, detail="File empty or unreadable")
+
+    augmented_text = await rewrite_rag_augmentor(original_text)
+
+    if ext == ".pdf":
+        save_to_pdf(augmented_text, destination)
+    else:
+        save_to_docx(augmented_text, destination)
