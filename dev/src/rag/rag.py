@@ -14,6 +14,7 @@ from flashrank import Ranker
 from langchain_community.document_compressors import FlashrankRerank
 from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
 from utils.utils import load_documents, split_documents
+from llm_model.model_server import client_mistral, mistral_llm
 
 # Load environment variables
 load_dotenv()
@@ -173,8 +174,11 @@ def get_or_load_vectorstore(company_id: str, vectorstores_cache : dict, data_dir
     return None
 
 
-def augment_chunks(docs, vectorstore : FAISS, window=1):
+def augment_chunks(docs, vectorstore : FAISS, window=1, active : bool = True):
 
+    if not active :
+        return docs
+    
     augmented = []
     seen = set()
 
@@ -262,7 +266,7 @@ def get_rag_context(question: str,
     # 3. return the retrieved context
     docs = compression_retriever.invoke(question) #get_relevant_documents
     # 4. Expand each doc with neighbors
-    augmented_docs = augment_chunks(docs, vectordb)
+    augmented_docs = augment_chunks(docs, vectordb, active=True)
     return (vectordb, "\n\n".join(d.page_content for d in augmented_docs))
 
 
@@ -298,3 +302,43 @@ def get_company_stats(company_id: str, vectorstores_cache : dict, data_dir: str 
         "index_exists": index_exists,
         "in_cache": company_id in vectorstores_cache
     } 
+
+
+async def rewrite_rag_augmentor(doc : str, client_mistral = client_mistral) -> str:
+
+    system_message = f"""
+Tu es un assistant de restructuration pour un pipeline RAG.
+Ton rôle est de réécrire un document en le segmentant en sous-parties thématiques (séparation par balise), 
+tout en respectant strictement sa structure et son ordre d'origine.
+
+Balise : <!--|||SECTION|||-->
+
+Contraintes de sortie (obligatoires) :
+- Conserve exactement l'ordre du document. Ne déplace pas, ne réorganise pas, ne fusionne pas de passages éloignés.
+- Regroupe uniquement les passages consécutifs qui concernent le même sujet, dans une seule sous-partie.
+- Il est interdit de créer plusieurs sous-parties successifs avec le même titre ou le même sujet.
+- Chaque sous-partie doit être structurée ainsi :
+
+### Sujet : <titre court, factuel, issu du texte>
+<paragraphe(s) réécrits pour clarté, sans changer le sens>
+<!--|||SECTION|||-->
+
+- Le sous-titre et son contenu doivent toujours être dans le même bloc, avant la balise.
+- Aucun autre texte hors sous-parties (pas d'intro, pas de conclusion, pas de commentaires).
+- Utilise uniquement la balise fournie pour séparer les sous-parties.
+- Préserve intégralement les faits : noms propres, chiffres, dates, citations, URLs, adresse, contacts, lieux.
+
+Règles de segmentation :
+- Regroupe les phrases par sujet ; fusionne les passages liés si c'est le même thème.
+- Si un passage est trop court pour avoir un titre détaillé, crée quand même un sous-titre minimal fidèle (ex. "### Sujet : Brève remarque").
+"""
+    messages = [{"role": "system", "content": system_message}] + [{"role": "user", "content": f"Réécrit le documet suivant en suivant strictement les instructions données: \n\n{doc}\n\n"}]
+
+    processed_doc =  await client_mistral.chat.complete_async(
+        model=mistral_llm,
+        messages=messages,
+        temperature=0,
+        top_p=1,
+        stream=False
+    )
+    return processed_doc.choices[0].message.content

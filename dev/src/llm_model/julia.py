@@ -1,5 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from typing import List, Optional, Dict, Any, Literal
+from pydantic import ValidationError
 from pathlib import Path
 from tools.functions import read_instructions, handle_stream_events
 from tools.for_agents import read_dir_struct, read_file_contents
@@ -7,46 +6,17 @@ from .model_server import planner_model, planner_core_model, executor_model, mcp
 from agents import Agent, Runner, AgentOutputSchema
 from agents.model_settings import ModelSettings
 from dotenv import load_dotenv
-from .model_utils import close_and_require_all
+from .model_utils import close_and_require_all, ToolCall, PlannerOutput, ExecutorOutput
 
 load_dotenv()
 BASE = Path(__file__).resolve().parent.parents[2]
-
-############################# Class #############################
-
-class ToolCall(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    name: str
-    args: Dict[str, Any] = Field(default_factory=dict)
-
-class PlannerOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    action_type: Literal["answer","tool","reject","clarify","escalate"]
-    tools_to_call: List[ToolCall] = Field(default_factory=list)
-    continue_discussion: bool = True
-    citations_required: bool = False
-    exec_required: bool = False
-    exec_inst: str = ""
-    user_visible_answer: str = ""
-
-class ExecutorOutput(BaseModel):
-    status: str = Field(..., description="one of: Completed|need_info|error")
-    final: bool = Field(default=False)
-    message: str = Field(default="")
-    data: Any = Field(default=None)
-    ask: str = Field(default="")
-    error: str = Field(default="")
 
 
 ############################# Instructions planner & executeur #############################
 
 planner_instructions = read_instructions(BASE/"dev/src/instructions/planner_instruction.md")
-
 executor_instructions = (read_instructions(BASE/"dev/src/instructions/executor_instruction.md"))
-
 escalator_instructions = (read_instructions(BASE/"dev/src/instructions/escalator_instruction.md"))
-
-
 
 ############################# Features additionnels #############################
 

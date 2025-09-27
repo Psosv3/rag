@@ -25,7 +25,8 @@ from supabase import AsyncClient
 import jwt
 # Models
 from llm_model.julia import julia_executor, julia_escalator
-from llm_model.model_utils import rewrite_rag_augmentor
+# Rag
+from rag.rag import rewrite_rag_augmentor
 # Utils
 from utils.utils import read_pdf, read_docx, save_to_pdf, save_to_docx, extract_emails, extract_intern_emails, check_difference, strip_emails, maintenant_fr, ZoneInfo
 
@@ -71,7 +72,7 @@ TOOL_SEND_EMAIL= "smtp_email_sender"
 
 ###################################################### Other consts : Keys and helpers ######################################################
 EXT_SESS_KEY = "ext_sess:{company_id}"          # HSET external_user_id -> session_id
-BAN_SET_KEY  = "ban:{company_id}"               # SET of banned session_ids
+BAN_KEY  = "ban:{company_id}:{session_id}"  # SET of banned session_ids
 RAG_CTX_KEY  = "rag:ctx:{company_id}:{qhash}"   # SETEX with doc snippets
 ESCALATE_SET_KEY = "escalate:{company_id}"      # SET of escalated session_ids
 
@@ -276,10 +277,10 @@ def validate_question(question: str, max_len: int = _DEFAULT_Q_MAX) -> str:
     return (len(cleaned) > max_len, cleaned)
 
 async def is_banned(r: Redis, company_id: str, session_id: str) -> bool:
-    return bool(await r.sismember(BAN_SET_KEY.format(company_id=company_id), session_id))
+    return bool(await r.exists(BAN_KEY.format(company_id=company_id, session_id=session_id)))
 
 async def forbiden_session(r: Redis, company_id: str, session_id: str):
-    await r.sadd(BAN_SET_KEY.format(company_id=company_id), session_id)
+    await r.set(BAN_KEY.format(company_id=company_id, session_id=session_id), "1", ex=86400)
 
 async def add_escalate_session(r: Redis, company_id: str, session_id: str):
     await r.sadd(ESCALATE_SET_KEY.format(company_id=company_id), session_id)
