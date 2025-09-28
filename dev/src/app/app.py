@@ -220,13 +220,14 @@ async def ask_question_public(req: Request,
                 await escalate_to_humans(conv_history, spbase, session_id, request) #, langue=request.langue)
 
                 answer_escalate = "C'est bon! Mon responsable a été informé. Il reviendra vers vous au plus vite."
-                await save_supabase_message(spbase, session_id, "assistant", answer_escalate)
+                escalate_msg = await save_supabase_message(spbase, session_id, "assistant", answer_escalate)
 
                 escalate_payload = {
                     "answer": answer_escalate,
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
+                    "message_id": escalate_msg.get("message_id"),
                 }
                 yield sse_data(escalate_payload)
                 return
@@ -273,7 +274,7 @@ async def ask_question_public(req: Request,
             # 5) Simple branches
             async def respond_and_log(text: str, langue : str) -> dict: # Helper to log assistant text
                 safe_answer = safety_post_filter(text)
-                await save_supabase_message(spbase, session_id, "assistant", safe_answer)
+                msg_result = await save_supabase_message(spbase, session_id, "assistant", safe_answer)
                 if langue.lower() in ("malgache", "malagasy","mg"):
                     safe_answer = await translate(safe_answer, "fr", "mg")
                     safe_answer = safe_answer[0]
@@ -282,6 +283,7 @@ async def ask_question_public(req: Request,
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
+                    "message_id": msg_result.get("message_id"),
                     }
 
             if planner_out.action_type == "reject":
@@ -308,12 +310,13 @@ async def ask_question_public(req: Request,
             if planner_out.action_type == "escalate":
                 await add_escalate_session(redis, request.company_id, session_id)
                 prep_escalate_resp = random.choice(LIST_ESCALATE_RESP)
-                await save_supabase_message(spbase, session_id, "assistant", prep_escalate_resp)
+                prep_msg = await save_supabase_message(spbase, session_id, "assistant", prep_escalate_resp)
                 ack_payload = {
                     "answer": prep_escalate_resp,
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
+                    "message_id": prep_msg.get("message_id"),
                 }
                 yield sse_data(ack_payload)
                 return
@@ -322,12 +325,13 @@ async def ask_question_public(req: Request,
             if planner_out.action_type == "tool":
 
                 temp_resp = random.choice(LIST_TEMP_RESP)
-                await save_supabase_message(spbase, session_id, "assistant", temp_resp)
+                temp_msg = await save_supabase_message(spbase, session_id, "assistant", temp_resp)
                 ack_payload = {
                     "answer": temp_resp,
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
+                    "message_id": temp_msg.get("message_id"),
                 }
                 yield sse_data(ack_payload)
 
@@ -353,12 +357,13 @@ async def ask_question_public(req: Request,
                     final_text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
                     print(f"%%%% final_text dans app.py : {final_text}")
                     safe_final = safety_post_filter(final_text)
-                    await save_supabase_message(spbase, session_id, "assistant", safe_final)
+                    final_msg = await save_supabase_message(spbase, session_id, "assistant", safe_final)
                     final_payload = {
                         "answer": safe_final or "C'est fait ! Merci pour votre attente.",
                         "company_id": request.company_id,
                         "session_id": session_id,
                         "external_user_id": request.external_user_id,
+                        "message_id": final_msg.get("message_id"),
                     }
                     yield sse_data(final_payload)
                     return
@@ -531,6 +536,22 @@ async def submit_feedback(
                 status_code=400, 
                 detail="Le feedback doit être 'like' ou 'dislike'"
             )
+        
+        # Debug: vérifier d'abord si le message existe
+        check_result = await spbase.table('public_chat_messages').select('*').eq('session_id', request.session_id).eq('message_id', request.message_id).eq('role', 'assistant').execute()
+        
+        if not check_result.data:
+            # Debug: lister tous les messages de cette session
+            all_messages = await spbase.table('public_chat_messages').select('message_id,role,content').eq('session_id', request.session_id).execute()
+            return {
+                "error": "Message non trouvé",
+                "debug_info": {
+                    "searched_session_id": request.session_id,
+                    "searched_message_id": request.message_id,
+                    "searched_role": "assistant",
+                    "all_messages_in_session": all_messages.data or []
+                }
+            }
         
         # Mettre à jour le message dans Supabase
         result = await spbase.table('public_chat_messages').update({
