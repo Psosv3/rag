@@ -37,6 +37,7 @@ from .app_utils import (
     # Class
     AuthUser,
     PublicQuestionRequest,
+    FeedbackRequest,
     # Functions
     refresh_companies_into_state,
     get_current_user,
@@ -515,6 +516,56 @@ async def audit_tail(n: int = 50, r: Redis = Depends(get_redis)):
     items = await r.lrange(AUDIT_LIST_KEY, 0, max(0, n - 1))
     return [json.loads(x) for x in items]
 
+@app.post("/feedback/")
+async def submit_feedback(
+    request: FeedbackRequest,
+    spbase: AsyncClient = Depends(get_supabase)
+):
+    """
+    Enregistre le feedback d'un utilisateur sur un message du chatbot
+    """
+    try:
+        # Validation du feedback
+        if request.feedback not in ['like', 'dislike']:
+            raise HTTPException(
+                status_code=400, 
+                detail="Le feedback doit être 'like' ou 'dislike'"
+            )
+        
+        # Mettre à jour le message dans Supabase
+        result = await spbase.table('public_chat_messages').update({
+            'user_feedback': request.feedback,
+            'feedback_timestamp': 'now()'
+        }).eq('session_id', request.session_id).eq('message_id', request.message_id).eq('role', 'assistant').execute()
+        
+        if not result.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Message non trouvé ou non éligible au feedback"
+            )
+        
+        # Log pour analytics
+        await log_audit(
+            f"Feedback {request.feedback} sur message {request.message_id} de la session {request.session_id}"
+        )
+        
+        return {
+            "success": True,
+            "message": f"Feedback '{request.feedback}' enregistré avec succès",
+            "session_id": request.session_id,
+            "message_id": request.message_id,
+            "feedback": request.feedback,
+            "data": result.data[0] if result.data else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de l'enregistrement du feedback: {str(e)}"
+        )
+
 @app.get("/")
 async def root():
     return {
@@ -526,6 +577,7 @@ async def root():
             "/ask_public/": "Poser une user_question publique (aucune authentification requise)",
             "/sessions_public/{company_id}": "Lister les sessions publiques (aucune authentification requise)",
             "/messages_public/{session_id}": "Récupérer les messages d'une session publique (aucune authentification requise)",
+            "/feedback/": "Enregistrer le feedback sur un message (aucune authentification requise)",
             "/stats/": "Statistiques de votre entreprise (authentification requise)",
             "/documents/": "Lister les documents de votre entreprise (authentification requise)",
             "DELETE /documents/{filename}": "Supprimer un document physique (authentification requise)",
@@ -534,6 +586,6 @@ async def root():
             "/refresh_companies": "Recharger les entreprises connues",
             "/audit_tail/": "Derniers logs d'audit (limités)",
         },
-        "public_endpoints": ["/ask_public/", "/sessions_public/", "/messages_public/", "/health/", "/", "/audit_tail/"],
+        "public_endpoints": ["/ask_public/", "/sessions_public/", "/messages_public/", "/feedback/", "/health/", "/", "/audit_tail/"],
         "auth_required": "Bearer token JWT requis pour les endpoints non publics",
     }

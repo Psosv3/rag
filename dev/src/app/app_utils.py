@@ -61,6 +61,12 @@ class PublicQuestionRequest(BaseModel):
     question: str
     langue: Optional[str] = None
 
+class FeedbackRequest(BaseModel):
+    session_id: str
+    message_id: str
+    feedback: str  # 'like' ou 'dislike'
+    company_id: str
+
 
 ###################################################### Table names ######################################################
 TABLE_SESSION = "public_chat_sessions"
