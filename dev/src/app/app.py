@@ -361,6 +361,7 @@ async def ask_question_public(req: Request,
                         "external_user_id": request.external_user_id,
                         "message_id": message_data.get("message_id")
                     }
+                    print(f"%%%% final_payload dans app.py : {final_payload}")
                     yield sse_data(final_payload)
                     return
                 except asyncio.TimeoutError:

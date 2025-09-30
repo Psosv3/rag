@@ -256,7 +256,11 @@ async def save_supabase_message(spbase: AsyncClient, session_id: str, role: str,
     res = await spbase.table(TABLE_MESSAGE)\
         .insert({"message_id": message_id, "session_id": session_id, "role": role, "content": content})\
         .execute()
-    result = first_row(res) or {}
+    result = first_row(res)
+    if isinstance(result, list) and result:
+        result = result[0]  # Prendre le premier élément de la liste
+    elif not result:
+        result = {}
     result["message_id"] = message_id  # S'assurer que le message_id est retourné
     return result
 
