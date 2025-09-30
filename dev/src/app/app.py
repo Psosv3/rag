@@ -553,9 +553,9 @@ async def submit_feedback(
             )
         
         # Log pour analytics
-        await log_audit(
-            f"Feedback {request.feedback} sur message {request.message_id} de la session {request.session_id}"
-        )
+        # await log_audit(
+        #     f"Feedback {request.feedback} sur message {request.message_id} de la session {request.session_id}"
+        # )
         
         return {
             "success": True,
