@@ -253,15 +253,20 @@ async def get_or_create_session(spbase : AsyncClient, redis: Redis, company_id: 
 
 async def save_supabase_message(spbase: AsyncClient, session_id: str, role: str, content: str) -> dict:
     message_id = str(uuid.uuid4())
+    print(f"%%%% save_supabase_message - message_id généré: {message_id}")
     res = await spbase.table(TABLE_MESSAGE)\
         .insert({"message_id": message_id, "session_id": session_id, "role": role, "content": content})\
         .execute()
+    print(f"%%%% save_supabase_message - réponse Supabase: {res}")
     result = first_row(res)
+    print(f"%%%% save_supabase_message - first_row result: {result}")
     if isinstance(result, list) and result:
         result = result[0]  # Prendre le premier élément de la liste
+        print(f"%%%% save_supabase_message - après extraction [0]: {result}")
     elif not result:
         result = {}
     result["message_id"] = message_id  # S'assurer que le message_id est retourné
+    print(f"%%%% save_supabase_message - résultat final: {result}")
     return result
 
 

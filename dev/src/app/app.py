@@ -354,6 +354,7 @@ async def ask_question_public(req: Request,
                     print(f"%%%% final_text dans app.py : {final_text}")
                     safe_final = safety_post_filter(final_text)
                     message_data = await save_supabase_message(spbase, session_id, "assistant", safe_final)
+                    print(f"%%%% message_data reçu dans app.py : {message_data}")
                     final_payload = {
                         "answer": safe_final or "C'est fait ! Merci pour votre attente.",
                         "company_id": request.company_id,
