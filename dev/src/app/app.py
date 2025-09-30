@@ -220,14 +220,13 @@ async def ask_question_public(req: Request,
                 await escalate_to_humans(conv_history, spbase, session_id, request) #, langue=request.langue)
 
                 answer_escalate = "C'est bon! Mon responsable a été informé. Il reviendra vers vous au plus vite."
-                message_data = await save_supabase_message(spbase, session_id, "assistant", answer_escalate)
+                await save_supabase_message(spbase, session_id, "assistant", answer_escalate)
 
                 escalate_payload = {
                     "answer": answer_escalate,
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
-                    "message_id": message_data.get("message_id")
                 }
                 yield sse_data(escalate_payload)
                 return
@@ -266,16 +265,15 @@ async def ask_question_public(req: Request,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
                 }
-                message_data = await save_supabase_message(spbase, session_id, "assistant", answer_fr)
+                await save_supabase_message(spbase, session_id, "assistant", answer_fr)
                 await log_audit(redis, {"type": "planner_block", "session_id": session_id, "company_id": request.company_id})
-                payload["message_id"] = message_data.get("message_id")
                 yield sse_data(payload)
                 return
 
             # 5) Simple branches
             async def respond_and_log(text: str, langue : str) -> dict: # Helper to log assistant text
                 safe_answer = safety_post_filter(text)
-                message_data = await save_supabase_message(spbase, session_id, "assistant", safe_answer)
+                await save_supabase_message(spbase, session_id, "assistant", safe_answer)
                 if langue.lower() in ("malgache", "malagasy","mg"):
                     safe_answer = await translate(safe_answer, "fr", "mg")
                     safe_answer = safe_answer[0]
@@ -284,7 +282,6 @@ async def ask_question_public(req: Request,
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
-                    "message_id": message_data.get("message_id")
                     }
 
             if planner_out.action_type == "reject":
@@ -311,13 +308,12 @@ async def ask_question_public(req: Request,
             if planner_out.action_type == "escalate":
                 await add_escalate_session(redis, request.company_id, session_id)
                 prep_escalate_resp = random.choice(LIST_ESCALATE_RESP)
-                message_data = await save_supabase_message(spbase, session_id, "assistant", prep_escalate_resp)
+                await save_supabase_message(spbase, session_id, "assistant", prep_escalate_resp)
                 ack_payload = {
                     "answer": prep_escalate_resp,
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
-                    "message_id": message_data.get("message_id")
                 }
                 yield sse_data(ack_payload)
                 return
@@ -326,13 +322,12 @@ async def ask_question_public(req: Request,
             if planner_out.action_type == "tool":
 
                 temp_resp = random.choice(LIST_TEMP_RESP)
-                message_data = await save_supabase_message(spbase, session_id, "assistant", temp_resp)
+                await save_supabase_message(spbase, session_id, "assistant", temp_resp)
                 ack_payload = {
                     "answer": temp_resp,
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
-                    "message_id": message_data.get("message_id")
                 }
                 yield sse_data(ack_payload)
 
