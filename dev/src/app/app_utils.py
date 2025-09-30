@@ -256,7 +256,9 @@ async def save_supabase_message(spbase: AsyncClient, session_id: str, role: str,
     res = await spbase.table(TABLE_MESSAGE)\
         .insert({"message_id": message_id, "session_id": session_id, "role": role, "content": content})\
         .execute()
-    return first_row(res) or {}
+    result = first_row(res) or {}
+    result["message_id"] = message_id  # S'assurer que le message_id est retourné
+    return result
 
 
 async def list_messages(spbase: AsyncClient, session_id: str, limit: int = 200) -> List[dict]:

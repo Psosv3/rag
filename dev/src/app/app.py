@@ -353,12 +353,13 @@ async def ask_question_public(req: Request,
                     final_text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
                     print(f"%%%% final_text dans app.py : {final_text}")
                     safe_final = safety_post_filter(final_text)
-                    await save_supabase_message(spbase, session_id, "assistant", safe_final)
+                    message_data = await save_supabase_message(spbase, session_id, "assistant", safe_final)
                     final_payload = {
                         "answer": safe_final or "C'est fait ! Merci pour votre attente.",
                         "company_id": request.company_id,
                         "session_id": session_id,
                         "external_user_id": request.external_user_id,
+                        "message_id": message_data.get("message_id")
                     }
                     yield sse_data(final_payload)
                     return
