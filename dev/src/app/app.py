@@ -234,7 +234,7 @@ async def ask_question_public(req: Request,
             docs = await get_cached_rag_docs(redis, request.company_id, user_question)
             
             if docs is None:
-                vectordb, docs = get_rag_context(user_question, request.company_id, VECTORSTORES_CACHE)
+                vectordb, docs = get_rag_context(user_question, request.company_id, VECTORSTORES_CACHE, HTTPException)
                 if request.company_id not in VECTORSTORES_CACHE:
                     VECTORSTORES_CACHE[request.company_id] = vectordb
                 await cache_rag_docs(redis, request.company_id, user_question, docs, ttl_seconds=300)
