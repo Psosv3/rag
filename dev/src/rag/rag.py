@@ -153,7 +153,7 @@ def build_index(company_id: str, data_dir: str = "data", augment_rag : bool = Tr
         else:
             raise e
 
-def get_or_load_vectorstore(company_id: str, vectorstores_cache : dict, data_dir: str = "data") -> Optional[FAISS]:
+def get_or_load_vectorstore(company_id: str, vectorstores_cache : dict, data_dir: str = "data", HTTPException=None) -> Optional[FAISS]:
     """Récupère le vectorstore depuis le cache ou le charge depuis le disque."""
 
     # Vérifier le cache
@@ -169,8 +169,8 @@ def get_or_load_vectorstore(company_id: str, vectorstores_cache : dict, data_dir
             return vectordb
         
         except Exception as e:
-            print(f"Erreur lors du chargement de l'index pour l'entreprise {company_id}: {e}")
-    
+            raise HTTPException(status_code=500, detail=f"Erreur lors du chargement de l'index pour l'entreprise {company_id}: {str(e)}")
+
     return None
 
 
@@ -221,6 +221,7 @@ def get_rag_context(question: str,
                *,
                k: int = 10,
                rerank_top_n: int = 3,
+               HTTPException=None,
                ) -> Union[str, Dict[str, Union[str, List[Document]]]]:
     
 
@@ -246,11 +247,11 @@ def get_rag_context(question: str,
     """
 
     # Récupérer le vectorstore de l'entreprise
-    vectordb = get_or_load_vectorstore(company_id, vectorstores_cache, data_dir)
+    vectordb = get_or_load_vectorstore(company_id, vectorstores_cache, data_dir, HTTPException)
     if vectordb is None:
-        raise ValueError(f"Aucun index trouvé pour l'entreprise {company_id}. Veuillez d'abord construire l'index.")
+        raise HTTPException(status_code=500, detail=f"Aucun index trouvé pour l'entreprise {company_id}. Veuillez d'abord construire l'index.")
     retriever = vectordb.as_retriever()
-
+    
     # 1. Top-K retrieval (vector)
     retriever.search_kwargs["k"] = k
 
@@ -317,13 +318,15 @@ Contraintes de sortie (obligatoires) :
 - Conserve exactement l'ordre du document. Ne déplace pas, ne réorganise pas, ne fusionne pas de passages éloignés.
 - Regroupe uniquement les passages consécutifs qui concernent le même sujet, dans une seule sous-partie.
 - Il est interdit de créer plusieurs sous-parties successifs avec le même titre ou le même sujet.
+- Mets tous les mots clés uniquement issus du paragraphe.
 - Chaque sous-partie doit être structurée ainsi :
 
 ### Sujet : <titre court, factuel, issu du texte>
+Mots clés : <mots clés, issu du texte>
 <paragraphe(s) réécrits pour clarté, sans changer le sens>
 <!--|||SECTION|||-->
 
-- Le sous-titre et son contenu doivent toujours être dans le même bloc, avant la balise.
+- Le sous-titre, les mots clés et son contenu doivent toujours être dans le même bloc, avant la balise.
 - Aucun autre texte hors sous-parties (pas d'intro, pas de conclusion, pas de commentaires).
 - Utilise uniquement la balise fournie pour séparer les sous-parties.
 - Préserve intégralement les faits : noms propres, chiffres, dates, citations, URLs, adresse, contacts, lieux.
