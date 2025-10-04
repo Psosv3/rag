@@ -457,20 +457,29 @@ async def get_document_content(
         company_id = current_user.company_id or "default-company"
         company_data_dir = get_company_data_dir(company_id, DATA_DIR)
         file_path = os.path.join(company_data_dir, filename)
+        
+        print(f"[DEBUG] Tentative de lecture du fichier:")
+        print(f"  - filename: {filename}")
+        print(f"  - company_id: {company_id}")
+        print(f"  - company_data_dir: {company_data_dir}")
+        print(f"  - file_path: {file_path}")
+        print(f"  - exists: {os.path.exists(file_path)}")
 
         if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail=f"Fichier {filename} non trouvé")
+            raise HTTPException(status_code=404, detail=f"Fichier {filename} non trouvé dans {company_data_dir}")
 
         if not filename.lower().endswith('.docx'):
             raise HTTPException(status_code=400, detail="Seuls les fichiers DOCX peuvent être lus pour édition")
 
         # Lire le contenu du fichier DOCX
+        print(f"[DEBUG] Lecture du document DOCX...")
         doc = Document(file_path)
         paragraphs = []
         for para in doc.paragraphs:
             paragraphs.append(para.text)
         
         content = "\n".join(paragraphs)
+        print(f"[DEBUG] Document lu avec succès. Longueur: {len(content)} caractères")
         
         return {
             "filename": filename,
@@ -480,6 +489,12 @@ async def get_document_content(
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        print(f"[ERROR] Exception lors de la lecture du document:")
+        print(f"  - Type: {type(e).__name__}")
+        print(f"  - Message: {str(e)}")
+        print(f"  - Traceback:")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Erreur lors de la lecture du document: {str(e)}")
 
 
