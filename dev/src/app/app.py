@@ -445,6 +445,128 @@ async def get_stats_endpoint(current_user: AuthUser = Depends(get_current_user))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des statistiques: {str(e)}")
 
+@app.get("/documents/{filename}/content")
+async def get_document_content(
+    filename: str,
+    current_user: AuthUser = Depends(get_current_user),
+):
+    """Récupère le contenu textuel d'un fichier DOCX"""
+    try:
+        from docx import Document
+        
+        company_id = current_user.company_id or "default-company"
+        company_data_dir = get_company_data_dir(company_id, DATA_DIR)
+        file_path = os.path.join(company_data_dir, filename)
+
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"Fichier {filename} non trouvé")
+
+        if not filename.lower().endswith('.docx'):
+            raise HTTPException(status_code=400, detail="Seuls les fichiers DOCX peuvent être lus pour édition")
+
+        # Lire le contenu du fichier DOCX
+        doc = Document(file_path)
+        paragraphs = []
+        for para in doc.paragraphs:
+            paragraphs.append(para.text)
+        
+        content = "\n".join(paragraphs)
+        
+        return {
+            "filename": filename,
+            "content": content,
+            "company_id": company_id,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la lecture du document: {str(e)}")
+
+
+@app.put("/documents/{filename}/content")
+async def update_document_content(
+    filename: str,
+    content: dict,
+    background_tasks: BackgroundTasks,
+    current_user: AuthUser = Depends(get_current_user),
+    redis: Redis = Depends(get_redis),
+):
+    """Met à jour le contenu d'un fichier DOCX"""
+    try:
+        from docx import Document
+        
+        company_id = current_user.company_id or "default-company"
+        company_data_dir = get_company_data_dir(company_id, DATA_DIR)
+        file_path = os.path.join(company_data_dir, filename)
+
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"Fichier {filename} non trouvé")
+
+        if not filename.lower().endswith('.docx'):
+            raise HTTPException(status_code=400, detail="Seuls les fichiers DOCX peuvent être modifiés")
+
+        new_content = content.get("content", "")
+        if not new_content:
+            raise HTTPException(status_code=400, detail="Le contenu ne peut pas être vide")
+
+        # Créer un nouveau document avec le contenu mis à jour
+        doc = Document()
+        for line in new_content.split("\n"):
+            doc.add_paragraph(line)
+        
+        # Sauvegarder le fichier
+        doc.save(file_path)
+        
+        # Vider le cache et reconstruire l'index en arrière-plan
+        await clear_all_cached_rag_docs(redis, company_id)
+        background_tasks.add_task(rebuild_company_index, company_id, DATA_DIR, HTTPException)
+        
+        return {
+            "message": f"Document {filename} mis à jour avec succès",
+            "filename": filename,
+            "company_id": company_id,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la mise à jour du document: {str(e)}")
+
+
+@app.get("/documents/{filename}/view")
+async def view_document(
+    filename: str,
+    current_user: AuthUser = Depends(get_current_user),
+):
+    """Stream un fichier PDF pour visualisation"""
+    try:
+        company_id = current_user.company_id or "default-company"
+        company_data_dir = get_company_data_dir(company_id, DATA_DIR)
+        file_path = os.path.join(company_data_dir, filename)
+
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"Fichier {filename} non trouvé")
+
+        if not filename.lower().endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="Seuls les fichiers PDF peuvent être visualisés")
+
+        # Streamer le fichier PDF
+        def iterfile():
+            with open(file_path, "rb") as f:
+                yield from f
+
+        return StreamingResponse(
+            iterfile(),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"inline; filename={filename}",
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la visualisation du document: {str(e)}")
+
+
 @app.delete("/documents/{filename}")
 async def delete_document(
     filename: str,
@@ -588,6 +710,9 @@ async def root():
             "/feedback/": "Enregistrer le feedback sur un message (aucune authentification requise)",
             "/stats/": "Statistiques de votre entreprise (authentification requise)",
             "/documents/": "Lister les documents de votre entreprise (authentification requise)",
+            "GET /documents/{filename}/content": "Récupérer le contenu d'un fichier DOCX (authentification requise)",
+            "PUT /documents/{filename}/content": "Mettre à jour le contenu d'un fichier DOCX (authentification requise)",
+            "GET /documents/{filename}/view": "Visualiser un fichier PDF (authentification requise)",
             "DELETE /documents/{filename}": "Supprimer un document physique (authentification requise)",
             "/clear_cache/": "Vider le cache (admin uniquement)",
             "/health/": "Vérification de l'état de l'API",
