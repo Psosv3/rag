@@ -582,6 +582,54 @@ async def view_document(
         raise HTTPException(status_code=500, detail=f"Erreur lors de la visualisation du document: {str(e)}")
 
 
+@app.get("/documents/{filename}/download")
+async def download_document(
+    filename: str,
+    current_user: AuthUser = Depends(get_current_user),
+):
+    """Télécharge un fichier (PDF ou DOCX)"""
+    try:
+        company_id = current_user.company_id or "default-company"
+        company_data_dir = get_company_data_dir(company_id, DATA_DIR)
+        file_path = os.path.join(company_data_dir, filename)
+
+        print(f"[DEBUG] Téléchargement du fichier:")
+        print(f"  - filename: {filename}")
+        print(f"  - file_path: {file_path}")
+        print(f"  - exists: {os.path.exists(file_path)}")
+
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"Fichier {filename} non trouvé")
+
+        if not filename.lower().endswith(('.pdf', '.docx')):
+            raise HTTPException(status_code=400, detail="Seuls les fichiers PDF et DOCX peuvent être téléchargés")
+
+        # Déterminer le MIME type
+        mime_type = "application/pdf" if filename.lower().endswith('.pdf') else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+        # Streamer le fichier
+        def iterfile():
+            with open(file_path, "rb") as f:
+                yield from f
+
+        return StreamingResponse(
+            iterfile(),
+            media_type=mime_type,
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"[ERROR] Exception lors du téléchargement:")
+        print(f"  - Type: {type(e).__name__}")
+        print(f"  - Message: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erreur lors du téléchargement du document: {str(e)}")
+
+
 @app.delete("/documents/{filename}")
 async def delete_document(
     filename: str,
@@ -728,6 +776,7 @@ async def root():
             "GET /documents/{filename}/content": "Récupérer le contenu d'un fichier DOCX (authentification requise)",
             "PUT /documents/{filename}/content": "Mettre à jour le contenu d'un fichier DOCX (authentification requise)",
             "GET /documents/{filename}/view": "Visualiser un fichier PDF (authentification requise)",
+            "GET /documents/{filename}/download": "Télécharger un fichier PDF ou DOCX (authentification requise)",
             "DELETE /documents/{filename}": "Supprimer un document physique (authentification requise)",
             "/clear_cache/": "Vider le cache (admin uniquement)",
             "/health/": "Vérification de l'état de l'API",
