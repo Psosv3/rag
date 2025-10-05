@@ -90,7 +90,7 @@ def build_chat_messages(messages_history,           # List[PublicChatMessage] tr
     messages = [{"role": "system", "content": rag_syst_msg.strip()}]
 
     # 1) Historique récent (on tronque si trop long)
-    # On garde les derniers N messages (hors system). Tu peux affiner avec une mesure de tokens.
+    # On garde les derniers N messages (hors system - par construction supabase). Affinge possible avec une mesure de tokens.
     hist = messages_history[-(max_history_pairs*2):-1] if max_history_pairs else messages_history[:-1]
 
     for msg in hist:

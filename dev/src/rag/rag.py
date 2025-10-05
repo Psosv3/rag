@@ -32,7 +32,6 @@ def rebuild_company_index(company_id: str, DATA_DIR, HTTPException):
     """Fonction pour reconstruire l'index d'une entreprise (utilisée en arrière-plan)."""
     try:
         build_index(company_id, DATA_DIR, HTTPException)
-        #print(f"Index reconstruit avec succès pour l'entreprise {company_id}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la re-construction de l'index: {str(e)}")
 
@@ -318,11 +317,11 @@ Contraintes de sortie (obligatoires) :
 - Conserve exactement l'ordre du document. Ne déplace pas, ne réorganise pas, ne fusionne pas de passages éloignés.
 - Regroupe uniquement les passages consécutifs qui concernent le même sujet, dans une seule sous-partie.
 - Il est interdit de créer plusieurs sous-parties successifs avec le même titre ou le même sujet.
-- Mets tous les mots clés uniquement issus du paragraphe.
+- Mets tous les mots clés principaux uniquement issus du paragraphe.
 - Chaque sous-partie doit être structurée ainsi :
 
 ### Sujet : <titre court, factuel, issu du texte>
-Mots clés : <mots clés, issu du texte>
+Mots clés : <mots clés importants, issu du texte>
 <paragraphe(s) réécrits pour clarté, sans changer le sens>
 <!--|||SECTION|||-->
 
@@ -335,7 +334,7 @@ Règles de segmentation :
 - Regroupe les phrases par sujet ; fusionne les passages liés si c'est le même thème.
 - Si un passage est trop court pour avoir un titre détaillé, crée quand même un sous-titre minimal fidèle (ex. "### Sujet : Brève remarque").
 """
-    messages = [{"role": "system", "content": system_message}] + [{"role": "user", "content": f"Réécrit le documet suivant en suivant strictement les instructions données: \n\n{doc}\n\n"}]
+    messages = [{"role": "system", "content": system_message}] + [{"role": "user", "content": f"Réécrit le document suivant en suivant strictement les instructions données: \n\n{doc}\n\n"}]
 
     processed_doc =  await client_mistral.chat.complete_async(
         model=mistral_llm,

@@ -253,20 +253,15 @@ async def get_or_create_session(spbase : AsyncClient, redis: Redis, company_id: 
 
 async def save_supabase_message(spbase: AsyncClient, session_id: str, role: str, content: str) -> dict:
     message_id = str(uuid.uuid4())
-    print(f"%%%% save_supabase_message - message_id généré: {message_id}")
     res = await spbase.table(TABLE_MESSAGE)\
         .insert({"message_id": message_id, "session_id": session_id, "role": role, "content": content})\
         .execute()
-    print(f"%%%% save_supabase_message - réponse Supabase: {res}")
     result = first_row(res)
-    print(f"%%%% save_supabase_message - first_row result: {result}")
     if isinstance(result, list) and result:
         result = result[0]  # Prendre le premier élément de la liste
-        print(f"%%%% save_supabase_message - après extraction [0]: {result}")
     elif not result:
         result = {}
     result["message_id"] = message_id  # S'assurer que le message_id est retourné
-    print(f"%%%% save_supabase_message - résultat final: {result}")
     return result
 
 
@@ -433,8 +428,7 @@ async def run_executor_agent(supabase,
             await save_supabase_message(supabase, session_id, "assistant", return_reponse)
         return return_reponse
     except Exception as e:
-        print(f"Erreur output julia: {e}")
-        return "Je suis désolé, j'ai rencontré une petite déconnexion. Pourriez-vous répéter ?"
+        return "Je suis désolé, j'ai subi une petite déconnexion. Pourriez-vous répéter svp ?"
 
 
 async def escalate_to_humans(conv_history, spbase, session_id, request, langue="Français"):
@@ -483,9 +477,7 @@ Choisissez la meilleure personne en fonction de son poste et de sa description :
 """
 
     input_escalate = escalate_msg_inst + list_contact_msg
-    print(input_escalate)
     await julia_escalator(input_escalate)
-
     return
 
 
