@@ -176,12 +176,12 @@ async def ask_question_public(req: Request,
                               spbase: AsyncClient = Depends(get_supabase),
                               redis: Redis = Depends(get_redis),
                               ):
+
     # 0) Resolve/create session
     session = await get_or_create_session(spbase, redis, request.company_id, request.external_user_id)
     if not isinstance(session, dict) or "session_id" not in session:
         raise HTTPException(status_code=500, detail="Invalid session object")
     session_id = session["session_id"]
-
 
     # 1) a) validate question length
     reject_question, user_question = validate_question(request.question) # check length abuse
@@ -194,7 +194,7 @@ async def ask_question_public(req: Request,
     # 1) b) sanitize_malagasy_sentence, dict_abreviation_mg
     if request.langue.lower() in ("malgache", "malagasy","mg"):
         user_question = await sanitize_translate(user_question.lower(), dict_abreviation_mg, "mg", "fr")
-    
+
     # 2) event_stream
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
@@ -208,7 +208,6 @@ async def ask_question_public(req: Request,
                     "external_user_id": request.external_user_id,
                 })
                 return
-
             # 1) Persist user message & load conv history
             await save_supabase_message(spbase, session_id, "user", user_question)
             conv_history = await list_messages(spbase, session_id, limit=60)
@@ -231,16 +230,14 @@ async def ask_question_public(req: Request,
                 }
                 yield sse_data(escalate_payload)
                 return
-
             # 2) RAG context with Redis cache
             docs = await get_cached_rag_docs(redis, request.company_id, user_question)
-            
             if docs is None:
-                vectordb, docs = get_rag_context(user_question, request.company_id, VECTORSTORES_CACHE, HTTPException)
+                vectordb, docs = get_rag_context(user_question, request.company_id, VECTORSTORES_CACHE, HTTPException=HTTPException)
                 if request.company_id not in VECTORSTORES_CACHE:
                     VECTORSTORES_CACHE[request.company_id] = vectordb
                 await cache_rag_docs(redis, request.company_id, user_question, docs, ttl_seconds=300)
-
+            
             # 3) Build messages for LLM/agents
             company_name = await get_company_name(app, request.company_id)
             syst_msg = system_message(company_name) #, langue = request.langue)

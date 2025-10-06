@@ -308,30 +308,28 @@ async def rewrite_rag_augmentor(doc : str, client_mistral = client_mistral) -> s
 
     system_message = f"""
 Tu es un assistant de restructuration pour un pipeline RAG.
-Ton rôle est de réécrire un document en le segmentant en sous-parties thématiques (séparation par balise), 
+Ton rôle est de réécrire un document en le segmentant en section thématiques (séparation par balise), 
 tout en respectant strictement sa structure et son ordre d'origine.
 
 Balise : <!--|||SECTION|||-->
 
 Contraintes de sortie (obligatoires) :
 - Conserve exactement l'ordre du document. Ne déplace pas, ne réorganise pas, ne fusionne pas de passages éloignés.
-- Regroupe uniquement les passages consécutifs qui concernent le même sujet, dans une seule sous-partie.
-- Il est interdit de créer plusieurs sous-parties successifs avec le même titre ou le même sujet.
-- Mets tous les mots clés principaux uniquement issus du paragraphe.
-- Chaque sous-partie doit être structurée ainsi :
+- Regroupe uniquement les parties consécutives qui concernent le même sujet / thème, dans une seule section.
+- Il est interdit de créer plusieurs section successives avec le même titre ou le même sujet.
+- Chaque section doit être structurée ainsi :
 
 ### Sujet : <titre court, factuel, issu du texte>
-Mots clés : <mots clés importants, issu du texte>
 <paragraphe(s) réécrits pour clarté, sans changer le sens>
 <!--|||SECTION|||-->
 
-- Le sous-titre, les mots clés et son contenu doivent toujours être dans le même bloc, avant la balise.
-- Aucun autre texte hors sous-parties (pas d'intro, pas de conclusion, pas de commentaires).
-- Utilise uniquement la balise fournie pour séparer les sous-parties.
+- Le sous-titre et son contenu doivent toujours être dans le même bloc, avant la balise.
+- Aucun autre texte hors sections (pas d'intro, pas de conclusion, pas de commentaires).
+- Utilise uniquement la balise fournie pour séparer les sections.
 - Préserve intégralement les faits : noms propres, chiffres, dates, citations, URLs, adresse, contacts, lieux.
 
 Règles de segmentation :
-- Regroupe les phrases par sujet ; fusionne les passages liés si c'est le même thème.
+- Regroupe par sujet ; fusionne les passages liés si c'est le même thème.
 - Si un passage est trop court pour avoir un titre détaillé, crée quand même un sous-titre minimal fidèle (ex. "### Sujet : Brève remarque").
 """
     messages = [{"role": "system", "content": system_message}] + [{"role": "user", "content": f"Réécrit le document suivant en suivant strictement les instructions données: \n\n{doc}\n\n"}]
