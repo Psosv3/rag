@@ -19,7 +19,11 @@ from llm_model.model_server import client_mistral, mistral_llm
 # Load environment variables
 load_dotenv()
 
-# Stockage global des vectorstores par entreprise
+# FlashRank setup
+rerank_top_n = 5
+flashrank_model = "ms-marco-MultiBERT-L-12" #"ms-marco-TinyBERT-L-2-v2" # "bce-reranker-base_v1"  # Multilingual
+client_ranker = Ranker(model_name=flashrank_model)
+compressor = FlashrankRerank(client=client_ranker, top_n=rerank_top_n)
 
 SELF_CHECK_PROMPT = (
     "Vérifie la réponse suivante par rapport au contexte fourni. "
@@ -219,8 +223,8 @@ def get_rag_context(question: str,
                data_dir: str = "data",
                *,
                k: int = 10,
-               rerank_top_n: int = 3,
                HTTPException=None,
+               activate_augment_chunks: bool = False,
                ) -> Union[str, Dict[str, Union[str, List[Document]]]]:
     
 
@@ -255,9 +259,6 @@ def get_rag_context(question: str,
     retriever.search_kwargs["k"] = k
 
     # 2. Rerank using FlashRank (French-compatible)
-    flashrank_model = "ms-marco-MultiBERT-L-12" #"ms-marco-TinyBERT-L-2-v2" # "bce-reranker-base_v1"  # Multilingual
-    client_ranker = Ranker(model_name=flashrank_model)
-    compressor = FlashrankRerank(client=client_ranker, top_n=rerank_top_n)
     compression_retriever = ContextualCompressionRetriever(
         base_compressor=compressor,
         base_retriever=retriever,
@@ -266,7 +267,7 @@ def get_rag_context(question: str,
     # 3. return the retrieved context
     docs = compression_retriever.invoke(question) #get_relevant_documents
     # 4. Expand each doc with neighbors
-    augmented_docs = augment_chunks(docs, vectordb, active=True)
+    augmented_docs = augment_chunks(docs, vectordb, active=activate_augment_chunks)
     return (vectordb, "\n\n".join(d.page_content for d in augmented_docs))
 
 

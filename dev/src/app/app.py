@@ -23,7 +23,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from redis.asyncio import Redis, ConnectionPool
 from supabase import create_async_client, AsyncClient
 # Utilities
-from utils.utils import system_message, safety_post_filter, build_chat_messages, controlled_fallback_response, sanitize_translate, translate, dict_abreviation_mg
+from utils.utils import system_message, safety_post_filter, build_chat_messages, controlled_fallback_response, sanitize_translate, translate, check_contact_and_name, dict_abreviation_mg
 from .app_utils import (
     # Constant
     TABLE_SESSION,
@@ -214,30 +214,51 @@ async def ask_question_public(req: Request,
 
             # 1) Prioritize escalate-ready case
             if await is_ready_to_escalate(redis, request.company_id, session_id):
-                await remove_escalate_session(redis, request.company_id, session_id)
+                go = check_contact_and_name(user_question)
+                if go == "OK":
+                    await remove_escalate_session(redis, request.company_id, session_id)
 
-                await escalate_to_humans(conv_history, spbase, session_id, request) #, langue=request.langue)
+                    await escalate_to_humans(conv_history, spbase, session_id, request) #, langue=request.langue)
 
-                answer_escalate = "C'est bon! Mon responsable a été informé. Il reviendra vers vous au plus vite."
-                message_data = await save_supabase_message(spbase, session_id, "assistant", answer_escalate)
+                    answer_escalate = "C'est bon! Mon responsable a été informé. Il reviendra vers vous au plus vite."
+                    message_data = await save_supabase_message(spbase, session_id, "assistant", answer_escalate)
+                    if request.langue.lower() in ("malgache", "malagasy","mg") :
+                        answer_escalate = "Misaotra tompoko. Efa lasa any amin'ny tompon'andraikitra ny hafatrao. Hifandray aminao arak'izay haingana izy."
+                    escalate_payload = {
+                        "answer": answer_escalate,
+                        "company_id": request.company_id,
+                        "session_id": session_id,
+                        "external_user_id": request.external_user_id,
+                        "message_id": message_data.get("message_id")
+                    }
+                    yield sse_data(escalate_payload)
+                    return
+                else:
+                    clarif = "J'aurais besoin de vos coordonnées (email ou téléphone) svp pour que notre équipe puisse vous recontacter. Pourriez-vous me redonner ensemble vos coordonnées et votre nom complet svp ? Merci !" if go == "missing_contact" else "Il me faudrait aussi votre nom complet svp. Pourriez-vous me redonner ensemble vos coordonnées et votre nom complet svp ? Merci !"
+                    message_data = await save_supabase_message(spbase, session_id, "assistant", clarif)
+                    if request.langue.lower() in ("malgache", "malagasy","mg"):
+                        clarif = "Miala tsiny tompoko, mila ny anaranao feno sy ny adiresy mailaka na ny laharan-telefaoninao izahay azafady afahanay miverina miantso anao. Mba azonao alefa amiko miaraka ve ireo ? Misaotra tompoko."
+                    payload = {
+                        "answer": clarif,
+                        "company_id": request.company_id,
+                        "session_id": session_id,
+                        "external_user_id": request.external_user_id,
+                        "message_id": message_data.get("message_id")
+                    }
+                    yield sse_data(payload)
+                    return
 
-                escalate_payload = {
-                    "answer": answer_escalate,
-                    "company_id": request.company_id,
-                    "session_id": session_id,
-                    "external_user_id": request.external_user_id,
-                    "message_id": message_data.get("message_id")
-                }
-                yield sse_data(escalate_payload)
-                return
             # 2) RAG context with Redis cache
-            docs = await get_cached_rag_docs(redis, request.company_id, user_question)
+            input_to_embed = user_question
+            docs = await get_cached_rag_docs(redis, request.company_id, input_to_embed)
             if docs is None:
-                vectordb, docs = get_rag_context(user_question, request.company_id, VECTORSTORES_CACHE, HTTPException=HTTPException)
+                vectordb, docs = get_rag_context(input_to_embed, request.company_id, VECTORSTORES_CACHE, HTTPException=HTTPException)
                 if request.company_id not in VECTORSTORES_CACHE:
                     VECTORSTORES_CACHE[request.company_id] = vectordb
-                await cache_rag_docs(redis, request.company_id, user_question, docs, ttl_seconds=300)
+                await cache_rag_docs(redis, request.company_id, input_to_embed, docs, ttl_seconds=300)
             
+            print(f"[INFO] docs dans app.py :  {docs}")
+
             # 3) Build messages for LLM/agents
             company_name = await get_company_name(app, request.company_id)
             syst_msg = system_message(company_name) #, langue = request.langue)
@@ -256,7 +277,7 @@ async def ask_question_public(req: Request,
             if not planner_out.continue_discussion:
                 await forbiden_session(redis, request.company_id, session_id)
                 answer_mg = "Tena miala tsiny indrindra tompoko, voatery aho hamarana ny resantsika eto. Mankasitraka indrindra dia mirary soa."
-                answer_fr = "Je conclus ici pour aujourd'hui, en vous remerciant chaleureusement. Prenez bien soin de vous. :)"
+                answer_fr = "Je suis vraiment désolé, je dois vous laisser ici pour aujourd'hui, en vous remerciant chaleureusement. Prenez bien soin de vous et à bientôt! :)"
                 payload = {
                     "answer": answer_mg if request.langue.lower() == "malgache" else answer_fr,
                     "company_id": request.company_id,
@@ -309,6 +330,8 @@ async def ask_question_public(req: Request,
                 await add_escalate_session(redis, request.company_id, session_id)
                 prep_escalate_resp = random.choice(LIST_ESCALATE_RESP)
                 message_data = await save_supabase_message(spbase, session_id, "assistant", prep_escalate_resp)
+                if request.langue.lower() in ("malgache", "malagasy","mg"):
+                    prep_escalate_resp = "Ho hampiresahiko amin'ny tompon'andraikitra ianao fa mba azonao alefa amiko miaraka ve ny anaranao sy ny laharan-telefaoninao na ny adiresy mailaka ? Ilainay ireo afahan'ilay tompon'andraikitra miverina miantso anao. Misaotra tompoko."
                 ack_payload = {
                     "answer": prep_escalate_resp,
                     "company_id": request.company_id,

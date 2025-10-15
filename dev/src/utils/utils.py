@@ -41,10 +41,10 @@ def detect_language(text: str, default_lang: str = "Français") -> str:
     return default_lang
 
 def safety_post_filter(answer: str) -> str:
-    # IA/LLM topics
-    lowered = answer.lower()
-    if any(k in lowered for k in ["intelligence artificielle", "llm", "modèle", "model"]):
-        return "Passons... :) Puis-je vous aider sur autres choses ?"
+    # # IA/LLM topics
+    # lowered = answer.lower()
+    # if any(k in lowered for k in ["intelligence artificielle", "llm", "modèle", "model"]):
+    #     return "Passons... :) Puis-je vous aider sur autres choses ?"
     return answer
 
 def maintenant_fr(zone) -> str:
@@ -166,6 +166,57 @@ def strip_emails(text: str) -> str:
 EMAIL_KEY_RE = re.compile(r"""['"]email['"]\s*:\s*['"]([^'"]+)['"]""")
 def extract_intern_emails(s: str):
     return EMAIL_KEY_RE.findall(s)
+
+PHONE_RE = re.compile(r"""
+    (?<!\w)
+    (?:\+?\d{1,3}[\s.\-()]*)?          # indicatif éventuel
+    (?:\(?\d{1,4}\)?[\s.\-()]*){2,6}   # groupes
+    \d{2,4}
+    (?!\w)
+""", re.VERBOSE)
+NAME_RE = re.compile(
+    r"\b(?:[A-Za-zÀ-ÖØ-öø-ÿ]{2,}(?:[-' ][A-Za-zÀ-ÖØ-öø-ÿ]{2,}){0,2})\b"
+)
+NON_DIGIT_RE = re.compile(r"\D")
+def check_contact_and_name(text: str) -> str:
+    """
+    Retourne:
+      - "OK"              si (email OU téléphone) ET un nom (hors zones contact) sont présents
+      - "missing_name"    si un contact est présent mais aucun nom distinct n'est trouvé
+      - "missing_contact" s'il n'y a ni email ni téléphone
+    """
+    if not text:
+        return "missing_contact"
+
+    # 1) E-mails
+    email_spans = [m.span() for m in EMAIL_RE.finditer(text)]
+
+    # 2) Téléphones (filtrés par nb total de chiffres: 10 à 15)
+    phone_spans = []
+    for m in PHONE_RE.finditer(text):
+        digits = NON_DIGIT_RE.sub("", m.group(0))
+        if 10 <= len(digits) <= 15:
+            phone_spans.append(m.span())
+
+    if not (email_spans or phone_spans):
+        return "missing_contact"
+
+    # 3) Masque les zones contact pour éviter de "lire" un nom dedans
+    if email_spans or phone_spans:
+        buf = list(text)
+        for a, b in email_spans + phone_spans:
+            for i in range(a, b):
+                buf[i] = " "
+        cleaned = "".join(buf)
+    else:
+        cleaned = text
+
+    # 4) Cherche un nom ailleurs (minuscules acceptées)
+    if NAME_RE.search(cleaned):
+        return "OK"
+    else:
+        return "missing_name"
+
 
 def check_difference(liste_1, liste_2):
     missing = set(liste_1).difference(liste_2)  # éléments dans liste_1 mais pas dans liste_2
