@@ -303,8 +303,16 @@ async def is_ready_to_escalate(r: Redis, company_id: str, session_id: str) -> bo
 async def remove_escalate_session(r: Redis, company_id: str, session_id: str) -> bool:
     await r.srem(ESCALATE_SET_KEY.format(company_id=company_id), session_id)
 
-
-
+async def messenger_wait_human(sp: AsyncClient, session_id: str) ->  bool:
+    """ Check si la session est une session messenger en attente d'un humain """
+    res = await sp.table(TABLE_SESSION) \
+                  .select("manual_response,messenger") \
+                  .eq("session_id", session_id) \
+                  .execute()
+    data = res.data or []
+    if data and data[0].get("manual_response") == True and data[0].get("messenger") == True:
+        return True
+    return False
 ###################################################### Cache rag ######################################################
 
 async def cache_rag_docs(r: Redis, company_id: str, question: str, docs: list, ttl_seconds: int = 300):

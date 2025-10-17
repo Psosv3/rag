@@ -199,8 +199,17 @@ async def ask_question_public(req: Request,
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
 
-            # 0) Ban check
+            # 0) Ban check or Messenger_waiting_human
             if await is_banned(redis, request.company_id, session_id):
+                yield sse_data({
+                    "answer": None,
+                    "company_id": request.company_id,
+                    "session_id": session_id,
+                    "external_user_id": request.external_user_id,
+                })
+                return
+            
+            if await messenger_wait_human(redis, request.company_id, session_id):
                 yield sse_data({
                     "answer": None,
                     "company_id": request.company_id,
