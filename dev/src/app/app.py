@@ -63,6 +63,8 @@ from .app_utils import (
     is_ready_to_escalate,
     clear_all_cached_rag_docs,
     safe_write_augmented_file,
+    messenger_wait_human,
+    prep_input_embed,
     )
 # rag & models
 from rag.rag import get_rag_context, rebuild_company_index, build_index, get_company_data_dir, get_company_stats, clear_company_cache
@@ -200,7 +202,10 @@ async def ask_question_public(req: Request,
         try:
 
             # 0) Ban check or Messenger_waiting_human
-            if await is_banned(redis, request.company_id, session_id):
+            ban = await is_banned(redis, request.company_id, session_id)
+            messenger_waiting_human = await messenger_wait_human(spbase, session_id)
+
+            if ban or messenger_waiting_human:
                 yield sse_data({
                     "answer": None,
                     "company_id": request.company_id,
@@ -209,14 +214,6 @@ async def ask_question_public(req: Request,
                 })
                 return
             
-            if await messenger_wait_human(redis, request.company_id, session_id):
-                yield sse_data({
-                    "answer": None,
-                    "company_id": request.company_id,
-                    "session_id": session_id,
-                    "external_user_id": request.external_user_id,
-                })
-                return
             # 1) Persist user message & load conv history
             await save_supabase_message(spbase, session_id, "user", user_question)
             conv_history = await list_messages(spbase, session_id, limit=60)
@@ -227,10 +224,10 @@ async def ask_question_public(req: Request,
                 if go == "OK":
                     await remove_escalate_session(redis, request.company_id, session_id)
 
-                    await escalate_to_humans(conv_history, spbase, session_id, request) #, langue=request.langue)
+                    await escalate_to_humans(conv_history, spbase, session_id, request)
 
                     answer_escalate = "C'est bon! Mon responsable a été informé. Il reviendra vers vous au plus vite."
-                    message_data = await save_supabase_message(spbase, session_id, "assistant", answer_escalate)
+                    message_data = await save_supabase_message(spbase, session_id, "assistant", answer_escalate, manual_response=True)
                     if request.langue.lower() in ("malgache", "malagasy","mg") :
                         answer_escalate = "Misaotra tompoko. Efa lasa any amin'ny tompon'andraikitra ny hafatrao. Hifandray aminao arak'izay haingana izy."
                     escalate_payload = {
@@ -246,7 +243,7 @@ async def ask_question_public(req: Request,
                     clarif = "J'aurais besoin de vos coordonnées (email ou téléphone) svp pour que notre équipe puisse vous recontacter. Pourriez-vous me redonner ensemble vos coordonnées et votre nom complet svp ? Merci !" if go == "missing_contact" else "Il me faudrait aussi votre nom complet svp. Pourriez-vous me redonner ensemble vos coordonnées et votre nom complet svp ? Merci !"
                     message_data = await save_supabase_message(spbase, session_id, "assistant", clarif)
                     if request.langue.lower() in ("malgache", "malagasy","mg"):
-                        clarif = "Miala tsiny tompoko, mila ny anaranao feno sy ny adiresy mailaka na ny laharan-telefaoninao izahay azafady afahanay miverina miantso anao. Mba azonao alefa amiko miaraka ve ireo ? Misaotra tompoko."
+                        clarif = "Azafady indrindra, mba mila ny anaranao feno sy ny adiresy mailaka na ny telefaoninao izahay azafady afahanay miverina miantso anao. Mba azonao alefa amiko miaraka ve ireo ? Misaotra tompoko."
                     payload = {
                         "answer": clarif,
                         "company_id": request.company_id,
@@ -258,7 +255,8 @@ async def ask_question_public(req: Request,
                     return
 
             # 2) RAG context with Redis cache
-            input_to_embed = user_question
+            input_to_embed = await prep_input_embed(conv_history, user_question)
+            print(f"\n [INFO] input_to_embed dans app.py :  \n{input_to_embed}\n")
             docs = await get_cached_rag_docs(redis, request.company_id, input_to_embed)
             if docs is None:
                 vectordb, docs = get_rag_context(input_to_embed, request.company_id, VECTORSTORES_CACHE, HTTPException=HTTPException)
@@ -266,7 +264,7 @@ async def ask_question_public(req: Request,
                     VECTORSTORES_CACHE[request.company_id] = vectordb
                 await cache_rag_docs(redis, request.company_id, input_to_embed, docs, ttl_seconds=300)
             
-            print(f"[INFO] docs dans app.py :  {docs}")
+            print(f"\n[INFO] docs dans app.py :  \n{docs}\n")
 
             # 3) Build messages for LLM/agents
             company_name = await get_company_name(app, request.company_id)

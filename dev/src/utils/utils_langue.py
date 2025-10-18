@@ -295,6 +295,7 @@ dict_remplacement_mg = {
     "mpitantana": "tompon'andraikitra",
     "olona": "tompon'andraikitra", 
     "fanatitra" : "serivisy",
-    "fanendrena":"rendez-vous"
+    "fanendrena":"rendez-vous",
+    "angon-drakitray" : "angon-drakitra",
 
 }

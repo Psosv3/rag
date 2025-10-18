@@ -251,11 +251,18 @@ async def get_or_create_session(spbase : AsyncClient, redis: Redis, company_id: 
     return session
 
 
-async def save_supabase_message(spbase: AsyncClient, session_id: str, role: str, content: str) -> dict:
+async def save_supabase_message(spbase: AsyncClient, session_id: str, role: str, content: str, manual_response: bool=False) -> dict:
     message_id = str(uuid.uuid4())
     res = await spbase.table(TABLE_MESSAGE)\
         .insert({"message_id": message_id, "session_id": session_id, "role": role, "content": content})\
         .execute()
+    
+    if manual_response:
+        await spbase.table(TABLE_SESSION)\
+            .update({"manual_response": manual_response})\
+            .eq("session_id", session_id)\
+            .execute()
+
     result = first_row(res)
     if isinstance(result, list) and result:
         result = result[0]  # Prendre le premier élément de la liste
@@ -274,7 +281,19 @@ async def list_messages(spbase: AsyncClient, session_id: str, limit: int = 200) 
         .execute()
     return res.data or []
 
-###################################################### Conversation utils ######################################################
+
+async def messenger_wait_human(sp: AsyncClient, session_id: str) ->  bool:
+    """ Check si la session est une session messenger en attente d'un humain """
+    res = await sp.table(TABLE_SESSION) \
+                  .select("manual_response,messenger") \
+                  .eq("session_id", session_id) \
+                  .execute()
+    data = res.data or []
+    if data and data[0].get("manual_response") == True and data[0].get("messenger") == True:
+        return True
+    return False
+
+###################################################### Conversation utils & redis ######################################################
 
 def validate_question(question: str, max_len: int = _DEFAULT_Q_MAX) -> str:
     """
@@ -283,10 +302,22 @@ def validate_question(question: str, max_len: int = _DEFAULT_Q_MAX) -> str:
     if not question or not question.strip():
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail="Demande utilisateur vide")
-
     cleaned = " ".join(question.strip().split())
-
     return (len(cleaned) > max_len, cleaned)
+
+async def prep_input_embed(conv_history: List[dict], user_question: str, len_hist: int = 3) -> str:
+    """
+    Prépare l'historique de conversation pour l'embedding.
+    Concatène les N dernières messages de l'utilisateur en une seule chaîne de texte à embeder + rajout x2 de la question courante pour la donner plus de poids.
+    objectif: ne pas perdre le contexte récent.
+    """
+    messages = []
+    for msg in conv_history[-len_hist*2:]:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role == "user":
+            messages.append(f"{content}")
+    return " ".join(messages)+" "+str(user_question).strip() if len(conv_history[-len_hist*2:]) >= len_hist*2 else " ".join(messages)
 
 async def is_banned(r: Redis, company_id: str, session_id: str) -> bool:
     return bool(await r.exists(BAN_KEY.format(company_id=company_id, session_id=session_id)))
@@ -303,16 +334,6 @@ async def is_ready_to_escalate(r: Redis, company_id: str, session_id: str) -> bo
 async def remove_escalate_session(r: Redis, company_id: str, session_id: str) -> bool:
     await r.srem(ESCALATE_SET_KEY.format(company_id=company_id), session_id)
 
-async def messenger_wait_human(sp: AsyncClient, session_id: str) ->  bool:
-    """ Check si la session est une session messenger en attente d'un humain """
-    res = await sp.table(TABLE_SESSION) \
-                  .select("manual_response,messenger") \
-                  .eq("session_id", session_id) \
-                  .execute()
-    data = res.data or []
-    if data and data[0].get("manual_response") == True and data[0].get("messenger") == True:
-        return True
-    return False
 ###################################################### Cache rag ######################################################
 
 async def cache_rag_docs(r: Redis, company_id: str, question: str, docs: list, ttl_seconds: int = 300):
