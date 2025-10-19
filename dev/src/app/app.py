@@ -50,7 +50,7 @@ from .app_utils import (
     save_supabase_message,
     get_cached_rag_docs,
     cache_rag_docs,
-    get_company_name,
+    get_company_name_resume,
     list_messages,
     forbiden_session,
     log_audit,
@@ -65,6 +65,7 @@ from .app_utils import (
     safe_write_augmented_file,
     messenger_wait_human,
     prep_input_embed,
+    get_or_write_company_resume,
     )
 # rag & models
 from rag.rag import get_rag_context, rebuild_company_index, build_index, get_company_data_dir, get_company_stats, clear_company_cache
@@ -91,6 +92,7 @@ async def lifespan(app: FastAPI):
     spbase = await create_async_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
     app.state.spbase = spbase
     app.state.companies = {}
+    app.state.company_resumes = {}
     await refresh_companies_into_state(app)
     try:
         yield
@@ -160,10 +162,12 @@ async def upload_file(file: UploadFile = File(...),
 @app.post("/build_index/")
 async def express_build_index(current_user: AuthUser = Depends(get_current_user),
                               redis: Redis = Depends(get_redis),
+                              spbase: AsyncClient = Depends(get_supabase),
                               ):
     try:
         await clear_all_cached_rag_docs(redis, current_user.company_id)
-        build_index(current_user.company_id, DATA_DIR, HTTPException)
+        _, company_synth = await build_index(current_user.company_id, DATA_DIR, HTTPException)
+        await get_or_write_company_resume(spbase, current_user.company_id, "write", company_synth)
         return {
             "message": f"Index construit avec succès pour l'entreprise {current_user.company_id}",
             "company_id": current_user.company_id,
@@ -256,25 +260,21 @@ async def ask_question_public(req: Request,
 
             # 2) RAG context with Redis cache
             input_to_embed = await prep_input_embed(conv_history, user_question)
-            print(f"\n [INFO] input_to_embed dans app.py :  \n{input_to_embed}\n")
             docs = await get_cached_rag_docs(redis, request.company_id, input_to_embed)
             if docs is None:
                 vectordb, docs = get_rag_context(input_to_embed, request.company_id, VECTORSTORES_CACHE, HTTPException=HTTPException)
                 if request.company_id not in VECTORSTORES_CACHE:
                     VECTORSTORES_CACHE[request.company_id] = vectordb
                 await cache_rag_docs(redis, request.company_id, input_to_embed, docs, ttl_seconds=300)
-            
-            print(f"\n[INFO] docs dans app.py :  \n{docs}\n")
 
             # 3) Build messages for LLM/agents
-            company_name = await get_company_name(app, request.company_id)
-            syst_msg = system_message(company_name) #, langue = request.langue)
+            company_name, company_resume = await get_company_name_resume(app, request.company_id)
+            syst_msg = system_message(company_name, company_resume)
             msgs = build_chat_messages(
                 messages_history=conv_history,
                 user_input=user_question,
                 context=docs,
                 system_message=syst_msg,
-                #langue= "Français", # initially request.langue,
                 max_history_pairs=30,
             )
 
@@ -560,6 +560,7 @@ async def update_document_content(
         doc.save(file_path)
         
         # Vider le cache et reconstruire l'index en arrière-plan
+        clear_company_cache(company_id, VECTORSTORES_CACHE) # Clear in-memory cache
         await clear_all_cached_rag_docs(redis, company_id)
         background_tasks.add_task(rebuild_company_index, company_id, DATA_DIR, HTTPException)
         
@@ -662,9 +663,15 @@ async def delete_document(
     filename: str,
     background_tasks: BackgroundTasks,
     current_user: AuthUser = Depends(get_current_user),
+    redis: Redis = Depends(get_redis),
 ):
     try:
-        company_id = current_user.company_id or "default-company"
+        
+        company_id = current_user.company_id
+
+        clear_company_cache(company_id, VECTORSTORES_CACHE) # Clear in-memory cache
+        await clear_all_cached_rag_docs(redis, company_id)  # Clear Redis cache
+
         company_data_dir = get_company_data_dir(company_id, DATA_DIR)
         file_path = os.path.join(company_data_dir, filename)
 
@@ -693,7 +700,7 @@ async def clear_cache_endpoint(current_user: AuthUser = Depends(get_current_user
     if (current_user.role or "").lower() != "admin":
         raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
     try:
-        clear_company_cache(current_user.company_id or "default-company")
+        clear_company_cache(current_user.company_id, VECTORSTORES_CACHE)
         return {
             "message": f"Cache vidé pour l'entreprise {current_user.company_id}",
             "company_id": current_user.company_id,

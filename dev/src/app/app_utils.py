@@ -271,6 +271,25 @@ async def save_supabase_message(spbase: AsyncClient, session_id: str, role: str,
     result["message_id"] = message_id  # S'assurer que le message_id est retourné
     return result
 
+async def get_or_write_company_resume(spbase: AsyncClient, company_id: str, action: str, resume_text: Optional[str] = None) :
+    if action == "get":
+        res = await spbase.table(TABLE_COMPANY)\
+            .select("company_resume")\
+            .eq("id", company_id)\
+            .execute()
+        data = res.data or []
+        return data[0].get("company_resume") if data else None
+    
+    elif action == "write":
+        if resume_text:
+            await spbase.table(TABLE_COMPANY)\
+                .update({"company_resume": resume_text})\
+                .eq("id", company_id)\
+                .execute()
+        return None
+    
+    else:
+        return None
 
 async def list_messages(spbase: AsyncClient, session_id: str, limit: int = 200) -> List[dict]:
     res = await spbase.table(TABLE_MESSAGE)\
@@ -376,28 +395,50 @@ def first_row(obj):
 
 
 ###################################################### Companies cache ######################################################
-async def refresh_companies_into_state(app: FastAPI):
-    spbase: AsyncClient = app.state.spbase  # type: ignore[attr-defined]
-    res = await spbase.table(TABLE_COMPANY).select("id, name").execute()
-    data = res.data or []
-    companies = {
-        row["id"]: row["name"]
-        for row in data
-        if row and row.get("id") and row.get("name")
-    }
-    app.state.companies = companies
-    # Update Redis with pipelined delete + hset to reduce RTTs
-    if companies:
-        pipe = redis_client.pipeline()
-        pipe.delete("companies")
-        pipe.hset("companies", mapping=companies)
-        await pipe.execute()
-    else:
-        await redis_client.delete("companies")
+async def refresh_companies_into_state(app: FastAPI) -> None:
+    """
+    Recharge companies & resumes en mémoire et dans Redis.
+    """
+    spbase = getattr(app.state, "spbase", None)
+    if spbase is None:
+        return
 
-async def get_company_name(app: FastAPI, company_id: str) -> str:
-    if hasattr(app.state, "companies") and company_id in app.state.companies:
-        return app.state.companies[company_id]
+    try:
+        res = await spbase.table(TABLE_COMPANY).select("id, name, company_resume").execute()
+        rows = res.data or []
+
+        companies = {r["id"]: str(r["name"]) for r in rows if r and r.get("id") and r.get("name")}
+        company_resumes = {r["id"]: str(r["company_resume"]) for r in rows if r and r.get("id") and r.get("company_resume")}
+
+        # État en mémoire
+        app.state.companies = companies
+        app.state.company_resumes = company_resumes
+
+        # Redis: delete puis (re)write, en 1 pipeline
+        pipe = redis_client.pipeline()
+        pipe.delete("companies", "company_resumes")
+        if companies:
+            pipe.hset("companies", mapping=companies)
+        if company_resumes:
+            pipe.hset("company_resumes", mapping=company_resumes)
+        await pipe.execute()
+    except Exception as e:
+        return 
+
+async def get_company_name_resume(app: FastAPI, company_id: str) -> tuple[str, Optional[str]]:
+    companies = getattr(app.state, "companies", {})
+    resumes = getattr(app.state, "company_resumes", {})
+    name = companies.get(company_id)
+    resume = resumes.get(company_id)
+    if name is None:
+        name = await redis_client.hget("companies", company_id) or "votre entreprise"
+    if resume is None:
+        resume = await redis_client.hget("company_resumes", company_id)
+    return name, resume
+
+async def get_company_resume(app: FastAPI, company_id: str) -> str:
+    if hasattr(app.state, "company_resumes") and company_id in app.state.company_resumes:
+        return app.state.company_resumes[company_id]
     name = await redis_client.hget("companies", company_id)
     return name or "votre entreprise"
 

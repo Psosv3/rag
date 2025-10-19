@@ -58,7 +58,7 @@ def create_vectorstore(docs: List[str],
                       splitter_chunk_size: int = 256,
                       splitter_overlap: int = 64,
                       embed_batch_size: int = 256,
-                      use_hnsw: bool = True,
+                      use_hnsw: bool = False, # anciennement True pour test (à voir si c'est pas trop long en prod), Normalisation L2  à 1 des vecteurs = produit scalaire devient exactement le cosinus (Avec normalise=True, IndexFlatIP ≈ cosine similarity exacte), sinon absence de normalisation : avantage des vecteurs à grande norme. garder FlatIP pour petits/moyens jeux ou si tu veux du 100 % exact / activer use_hnsw dès ~10^5–10^6 vecteurs ou que la latence devient critique, et augmenter efSearch si le rappel est trop bas.
                       hnsw_m: int = 32,
                       normalise: bool = True,
                       persist_dir: Optional[str | Path] = None,
@@ -130,7 +130,7 @@ def create_vectorstore(docs: List[str],
 
     return vectordb
 
-def build_index(company_id: str, data_dir: str = "data", augment_rag : bool = True, HTTPException=None):
+async def build_index(company_id: str, data_dir: str = "data", update_resume : bool = True, HTTPException=None):
     """Builds the vectorstore index from documents for a specific company."""
 
     try:
@@ -139,6 +139,15 @@ def build_index(company_id: str, data_dir: str = "data", augment_rag : bool = Tr
         company_index_dir = get_company_index_dir(company_id, data_dir)
         
         docs = load_documents(company_data_dir) # Charger les documents de l'entreprise : return = list[doc1_str, docs2_str, ...]
+
+        company_synth = None
+        if update_resume:
+            full_docs = "\n--------\n".join(docs)
+            try:
+                company_synth = await company_resume(full_docs)
+            except :
+                company_synth = f"Veuillez déduire le résumé de l'entreprise à partir des contextes fournis ci-dessous."
+
         split_docs = split_documents(docs)
         if not split_docs:
             if HTTPException:
@@ -148,7 +157,7 @@ def build_index(company_id: str, data_dir: str = "data", augment_rag : bool = Tr
         
         # Créer le vectorstore avec persistance
         vectordb = create_vectorstore(split_docs, persist_dir=company_index_dir)
-        return vectordb
+        return vectordb, company_synth
     
     except Exception as e:
         if HTTPException:
@@ -334,6 +343,55 @@ Règles de segmentation :
 - Si un passage est trop court pour avoir un titre détaillé, crée quand même un sous-titre minimal fidèle (ex. "### Sujet : Brève remarque").
 """
     messages = [{"role": "system", "content": system_message}] + [{"role": "user", "content": f"Réécrit le document suivant en suivant strictement les instructions données: \n\n{doc}\n\n"}]
+
+    processed_doc =  await client_mistral.chat.complete_async(
+        model=mistral_llm,
+        messages=messages,
+        temperature=0,
+        top_p=1,
+        stream=False
+    )
+    return processed_doc.choices[0].message.content
+
+async def company_resume(doc : str, client_mistral = client_mistral) -> str:
+    system_message = f"""
+### Rôle :
+Tu es un expert en synthèse d'informations.
+Ta mission est de produire un résumé concis et complet (100 à 200 mots) d'une entreprise, organisation ou institution, à partir d'un document fourni par l'utilisateur.
+
+### Objectifs :
+- Extraire les informations clés (identité, secteur, activités, services, localisation, contacts, spécificités, etc.).
+- Structurer le résumé pour qu'il soit clair, informatif et directement exploitable.
+- Prioriser les éléments qui définissent l'activité principale, la valeur ajoutée et les modalités pratiques client (accès, documents, horaires, etc.).
+
+### Consignes de Synthèse :
+1. Identité et Localisation : Commence par le nom de l'entreprise/organisation, son secteur d'activité, et sa localisation (ville, adresse si pertinente).
+Ajoute les coordonnées principales (téléphone, email, site web, réseaux sociaux si disponibles).
+2. Activités et Services :
+    - Résume les services/produits proposés en 2-3 phrases max.
+    - Mentionne les spécificités (ex : disponibilité H24, services sur rendez-vous, tarification, innovations, etc.).
+3. Points Clés Distinctifs :
+    - Si le document en mentionne, mets en avant 1-2 principaux éléments différenciants de l'entreprise/organisation (ex : engagement qualité, accessibilité, technologie utilisée, partenariats, labels, etc.).
+4. Modalités Pratiques :
+    - Horaires d'ouverture, disponibilités (ex : 24/7, sur rendez-vous).
+    - Conseils utiles pour les clients/utilisateurs.
+5. Style et Format :
+    - Phrases courtes et directes, sans jargon.
+    - Évite les listes : intègre les informations dans des phrases fluides.
+    - Ton neutre et professionnel, adapté au secteur (médical, commercial, associatif, etc.).
+    - Pas de détails superflus : concentre-toi sur ce qui est essentiel pour comprendre l'entreprise et ses services.
+6. Exemple de sortie attendue :
+"EcoTech Solutions, basée à Lyon, est un leader français des solutions d'énergie renouvelable pour les particuliers et entreprises.
+L'entreprise conçoit et installe des panneaux solaires, pompes à chaleur et systèmes de stockage d'énergie, avec un accompagnement clé en main incluant audit énergétique et financement vert.
+Labellisée RGE, elle garantit des installations durables et un suivi post-vente réactif. Les devis sont gratuits et réalisables en ligne ou sur rendez-vous en agence (ouverte du lundi au vendredi, 9h-18h).
+EcoTech Solutions se distingue par son engagement zéro déchet et son partenariat avec EDF pour des tarifs avantageux.
+Contacts : 04 78 00 00 00 / contact@ecotech.fr."
+7. Contraintes :
+    - Longueur maximale : 200 mots.
+    - Ne pas répéter les informations.
+    - Vérifier l'exactitude des données (NE JAMAIS INVENTER, se baser STRICTEMENT sur le document).
+"""
+    messages = [{"role": "system", "content": system_message}] + [{"role": "user", "content": f"Fait un résumé - synthèse de l'entreprise suivant en respectant les consignes à la lettre: \n\n{doc}\n\n"}]
 
     processed_doc =  await client_mistral.chat.complete_async(
         model=mistral_llm,
