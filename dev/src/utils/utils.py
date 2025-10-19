@@ -1,8 +1,9 @@
 import os
 from PyPDF2 import PdfReader
 import docx
+import re, unicodedata
 from dotenv import load_dotenv
-from typing import List, Dict
+from typing import List, Dict, Set
 from langchain.prompts import PromptTemplate
 from langchain.schema import Document
 from langchain.base_language import BaseLanguageModel
@@ -11,12 +12,11 @@ from llm_model.julia import planner_instructions
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo 
-import re
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from .google_translator import translate
-from .utils_langue import dict_remplacement_mg, dict_abreviation_mg
+from .utils_langue import dict_remplacement_mg, dict_abreviation_mg, STOPWORDS_FR
 #---------------------------------
 
 # Load environment variables
@@ -30,6 +30,8 @@ SELF_CHECK_PROMPT = (
     "sinon répond 'INSUFFISANT'. "
     "Contexte:\n{context}\n\nRéponse:\n{answer}\n\nVerdict:"
 )
+
+################################### Def functions ###################################
 
 def log_audit(event: Dict[str, Any], audit_logs):
     event["ts"] = datetime.now().isoformat()
@@ -288,3 +290,14 @@ def save_to_docx(text: str, filename: str):
 
     doc.save(filename)
 
+
+def _norm(s: str) -> str:
+    # baisse de casse + déaccentuation
+    return unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii").lower()
+
+def _tokens(s: str) -> Set[str]:
+    return {t for t in re.findall(r"\b\w+\b", _norm(s)) if len(t) >= 3 and t not in STOPWORDS_FR}
+
+def _lexical_hit(text: str, q_tokens: Set[str]) -> int:
+    # nombre de tokens en commun (sert de petit boost)
+    return len(_tokens(text) & q_tokens)

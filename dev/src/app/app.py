@@ -262,11 +262,11 @@ async def ask_question_public(req: Request,
             input_to_embed = await prep_input_embed(conv_history, user_question)
             docs = await get_cached_rag_docs(redis, request.company_id, input_to_embed)
             if docs is None:
-                vectordb, docs = get_rag_context(input_to_embed, request.company_id, VECTORSTORES_CACHE, HTTPException=HTTPException)
+                vectordb, docs = await get_rag_context(input_to_embed, request.company_id, VECTORSTORES_CACHE, HTTPException=HTTPException)
                 if request.company_id not in VECTORSTORES_CACHE:
                     VECTORSTORES_CACHE[request.company_id] = vectordb
                 await cache_rag_docs(redis, request.company_id, input_to_embed, docs, ttl_seconds=300)
-
+                
             # 3) Build messages for LLM/agents
             company_name, company_resume = await get_company_name_resume(app, request.company_id)
             syst_msg = system_message(company_name, company_resume)

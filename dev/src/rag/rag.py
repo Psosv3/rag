@@ -7,13 +7,14 @@ from dotenv import load_dotenv
 from typing import Optional, Union, List, Dict
 from langchain.schema import Document
 import uuid
+import asyncio
 from pathlib import Path
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.docstore.in_memory import InMemoryDocstore
 from flashrank import Ranker
 from langchain_community.document_compressors import FlashrankRerank
 from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
-from utils.utils import load_documents, split_documents
+from utils.utils import load_documents, split_documents, _tokens, _lexical_hit
 from llm_model.model_server import client_mistral, mistral_llm
 
 # Load environment variables
@@ -226,19 +227,22 @@ def augment_chunks(docs, vectorstore : FAISS, window=1, active : bool = True):
     return augmented
 
 
-def get_rag_context(question: str,
+async def get_rag_context(question: str,
                company_id: str,
                vectorstores_cache: dict,
                data_dir: str = "data",
                *,
                k: int = 10,
+               final_k: int = 5,
                HTTPException=None,
                activate_augment_chunks: bool = False,
+               rerank: bool = False,
+               lexical_filter: bool = False,
+               shortlist_factor: int = 5,
                ) -> Union[str, Dict[str, Union[str, List[Document]]]]:
     
 
     """Retrieve a context to a question via a RAG pipeline with reranking for a specific company.
-
     Args:
         question (str): The user question in natural language. Must be non-empty.
         company_id (str): Identifier of the company whose vector index should be used.
@@ -248,41 +252,49 @@ def get_rag_context(question: str,
         Must be >= 1. Defaults to 5.
         rerank_top_n (int, optional): Number of documents to keep after reranking with FlashRank.
         Must be >= 1. Defaults to 3.
-
     Returns:
         String
-
     Raises:
         ValueError: If the question is empty/whitespace only, or if no index exists for the given company_id.
         RuntimeError: If an error occurs during retrieval or QA chain execution.
-
     """
+    if not question or not question.strip():
+        raise HTTPException(status_code=400, detail="Question vide.")
 
     # Récupérer le vectorstore de l'entreprise
     vectordb = get_or_load_vectorstore(company_id, vectorstores_cache, data_dir, HTTPException)
     if vectordb is None:
         raise HTTPException(status_code=500, detail=f"Aucun index trouvé pour l'entreprise {company_id}. Veuillez d'abord construire l'index.")
-    retriever = vectordb.as_retriever()
     
-    # 1. Top-K retrieval (vector)
-    retriever.search_kwargs["k"] = k
+    # 1) Dense shortlist (plus grande que k)
+    shortlist_k = max(k * shortlist_factor, k)
+    dense_candidates: List[Document] = await asyncio.get_running_loop().run_in_executor(None, lambda: vectordb.similarity_search(question, k=shortlist_k))
 
-    # 2. Rerank using FlashRank (French-compatible)
-    compression_retriever = ContextualCompressionRetriever(
-        base_compressor=compressor,
-        base_retriever=retriever,
-    )
+    # 2) Filtre/boost lexical (priorise les chunks contenant les mots clés)
+    if lexical_filter:
+        qtok = _tokens(question)
+        hits, rest = [], []
+        for d in dense_candidates:
+            (hits if _lexical_hit(d.page_content, qtok) > 0 else rest).append(d)
+        preselected = (hits + rest)[:k]     # d’abord les “hits”, puis on complète
+    else:
+        preselected = dense_candidates[:k]
 
-    # 3. return the retrieved context
-    docs = compression_retriever.invoke(question) #get_relevant_documents
+    # 3) Compression (FlashRank / ton compressor existant) : On compresse uniquement les pré-sélectionnés   
+    if rerank :
+        if compressor is not None:
+            docs = compressor.compress_documents(preselected, question)
+    else:
+        docs = preselected[:final_k]
+
     # 4. Expand each doc with neighbors
     augmented_docs = augment_chunks(docs, vectordb, active=activate_augment_chunks)
+    
     return (vectordb, "\n\n".join(d.page_content for d in augmented_docs))
 
 
 def clear_company_cache(company_id: str, vectorstores_cache : dict):
     """Vide le cache vectorstore pour une entreprise spécifique."""
-
     if company_id in vectorstores_cache:
         del vectorstores_cache[company_id]
 

@@ -297,5 +297,93 @@ dict_remplacement_mg = {
     "fanatitra" : "serivisy",
     "fanendrena":"rendez-vous",
     "angon-drakitray" : "angon-drakitra",
+    "fahalalana" : "information",
+    "fahalalana" : "information",
+    "fahalalana" : "information",
+    "fahalalana" : "information",
+    "fahalalana" : "information",
+    "fahalalana" : "information",
 
+}
+
+
+STOPWORDS_FR = {
+    # Déterminants / articles
+    "le","la","les","l","un","une","des","du","de","d","au","aux",
+    "ce","cet","cette","ces","chaque","quelque","quelques","certain","certaine","certains","certaines",
+    "tout","toute","toutes","tous","nul","nulle","plusieurs","divers","diverses","maint","mainte","maints","maintes",
+
+    # Possessifs
+    "mon","ma","mes","ton","ta","tes","son","sa","ses",
+    "notre","nos","votre","vos","leur","leurs",
+
+    # Pronoms personnels / compléments
+    "je","tu","il","elle","on","nous","vous","ils","elles",
+    "me","moi","m","te","toi","t","se","soi","s",
+    "le","la","les","lui","leur","eux","y","en",
+
+    # Demonstratifs / indéfinis
+    "ceci","cela","ca","ça","celui","celle","ceux","celles",
+    "quiconque","chacun","chacune","aucun","aucune","autre","autres","meme","meme","soi-meme","soi meme",
+
+    # Relatifs / interrogatifs
+    "qui","que","quoi","dont","ou","où","quand","comment","combien","lequel","laquelle",
+    "lesquels","lesquelles","duquel","desquels","desquelles","auquel","auxquels","auxquelles",
+    "quoi","quelle","quelles","quels","pourquoi",
+
+    # Prépositions
+    "a","à","apres","avant","avec","chez","contre","dans","de","depuis","derriere","devant",
+    "en","entre","envers","hormis","hors","jusque","jusqua","jusquau","jusquaux","malgre",
+    "par","parmi","pendant","pour","pres","proche","loin","sans","selon","sous","sur","vers","via","autour",
+
+    # Conjonctions / connecteurs
+    "et","ou","ni","mais","or","donc","car","que","qu","parce","puisque","lorsque","lorsqu","quoique",
+    "bien","bienque","afin","ainsi","alors","ensuite","puis","tandis","tandisque","cependant",
+    "toutefois","pourtant","sinon","desormais","des lors","deslors","dailleurs","d autre","davantage",
+
+    # Négation / quantifieurs fréquents
+    "ne","pas","plus","jamais","rien","personne","guere","point","aucun","aucune",
+
+    # Adverbes très courants
+    "tres","trop","peu","moins","autant","aussi","encore","toujours","souvent","parfois","rarement",
+    "deja","maintenant","ici","ailleurs","partout","nullepart","presque","environ","seulement",
+    "davantage","desormais","bientot","longtemps","vite","lentement","ensuite","puis","alors",
+
+    # Auxiliaires ÊTRE (formes fréquentes)
+    "etre","suis","es","est","sommes","etes","sont","etais","etait","etions","etiez","etaient",
+    "serai","seras","sera","serons","serez","seront","serais","serait","serions","seriez","seraient",
+    "ete","etant",
+
+    # Auxiliaires AVOIR (formes fréquentes)
+    "avoir","ai","as","a","avons","avez","ont","avais","avait","avions","aviez","avaient",
+    "aurai","auras","aura","aurons","aurez","auront","aurais","aurait","aurions","auriez","auraient",
+    "eu","ayant",
+
+    # Verbes très fréquents (formes usuelles, utiles en stoplist)
+    # FAIRE
+    "faire","fais","fait","faisons","faites","font","faisait","faisaient","ferai","feras","fera","ferons","ferez","feront",
+    # ALLER
+    "aller","vais","vas","va","allons","allez","vont","allait","allaient","irai","iras","ira","irons","irez","iront",
+    # POUVOIR
+    "pouvoir","peux","peut","pouvons","pouvez","peuvent","pouvait","pouvaient","pourrai","pourras","pourra","pourrons","pourrez","pourront",
+    # DEVOIR
+    "devoir","dois","doit","devons","devez","doivent","devait","devaient","devrai","devras","devra","devrons","devrez","devront",
+    # VOULOIR
+    "vouloir","veux","veut","voulons","voulez","veulent","voulait","voulaient","voudrai","voudras","voudra","voudrons","voudrez","voudront",
+    # FALLOIR
+    "falloir","faut","fallait","faudra",
+    # VENIR
+    "venir","viens","vient","venons","venez","viennent","venait","venaient","viendrai","viendras","viendra","viendrons","viendrez","viendront",
+    # VOIR
+    "voir","vois","voit","voyons","voyez","voient","voyait","voyaient","verrai","verras","verra","verrons","verrez","verront",
+    # SAVOIR
+    "savoir","sais","sait","savons","savez","savent","savait","savaient","saurai","sauras","saura","saurons","saurez","sauront",
+    # DIRE (tres courant)
+    "dire","dis","dit","disons","dites","disent","disait","disaient",
+    # PRENDRE (tres courant)
+    "prendre","prends","prend","prenons","prenez","prennent","prenait","prenaient",
+
+    # Divers utiles
+    "etc","ci","la","leurs","propos","afin","dont","leurs","leur","soit","soient","tel","telle","tels","telles",
+    "plutot","plutot que","quasiment","quasi","quel","quelle","quels","quelles","ainsi",
 }
