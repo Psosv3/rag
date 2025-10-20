@@ -60,6 +60,7 @@ class PublicQuestionRequest(BaseModel):
     external_user_id: Optional[str] = None
     question: str
     langue: Optional[str] = None
+    messenger: Optional[bool] = False
 
 class FeedbackRequest(BaseModel):
     session_id: str
@@ -160,7 +161,7 @@ async def get_supabase(request: Request) -> AsyncClient:
     spbase: AsyncClient = request.app.state.spbase  # type: ignore[attr-defined]
     return spbase
 
-async def get_or_create_session(spbase : AsyncClient, redis: Redis, company_id: str, external_user_id: str | None) -> dict:
+async def get_or_create_session(spbase : AsyncClient, redis: Redis, company_id: str, external_user_id: str | None, messenger: bool = False) -> dict:
 
     key = EXT_SESS_KEY.format(company_id=company_id)
 
@@ -224,6 +225,7 @@ async def get_or_create_session(spbase : AsyncClient, redis: Redis, company_id: 
                  "external_user_id": external_user_id,
                  "session_id": str(uuid.uuid4()),
                  "title": title,
+                 "messenger": messenger,
                  "created_at": datetime.now().isoformat(),
                  "updated_at": datetime.now().isoformat()
                  },

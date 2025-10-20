@@ -184,7 +184,7 @@ async def ask_question_public(req: Request,
                               ):
 
     # 0) Resolve/create session
-    session = await get_or_create_session(spbase, redis, request.company_id, request.external_user_id)
+    session = await get_or_create_session(spbase, redis, request.company_id, request.external_user_id, request.messenger)
     if not isinstance(session, dict) or "session_id" not in session:
         raise HTTPException(status_code=500, detail="Invalid session object")
     session_id = session["session_id"]
