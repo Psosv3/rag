@@ -221,7 +221,7 @@ async def ask_question_public(req: Request,
             # 1) Persist user message & load conv history
             await save_supabase_message(spbase, session_id, "user", user_question)
             conv_history = await list_messages(spbase, session_id, limit=60)
-            # conv_history = [conv_history[-1]] if conv_history else []
+            conv_history = conv_history[-8:] if conv_history else []
 
             # 1) Prioritize escalate-ready case
             if await is_ready_to_escalate(redis, request.company_id, session_id):
