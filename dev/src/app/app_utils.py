@@ -294,13 +294,34 @@ async def get_or_write_company_resume(spbase: AsyncClient, company_id: str, acti
         return None
 
 async def list_messages(spbase: AsyncClient, session_id: str, limit: int = 200) -> List[dict]:
+    from datetime import datetime, date, time, timedelta, timezone
+    # Si tes timestamps sont en UTC :
+    tz = timezone.utc
+
+    # 👉 Si tu veux filtrer selon l'heure locale (ex: Europe/Paris), utilise :
+    # from zoneinfo import ZoneInfo
+    # tz = ZoneInfo("Europe/Paris")
+
+    today = datetime.now(tz).date()
+    start = datetime.combine(today, time.min, tzinfo=tz)      # 00:00:00
+    end   = start + timedelta(days=1)                          # demain 00:00:00 (exclu)
+
     res = await spbase.table(TABLE_MESSAGE)\
         .select("role,content,created_at")\
         .eq("session_id", session_id)\
+        .gte("created_at", start.isoformat())\
+        .lt("created_at", end.isoformat())\
         .order("created_at", desc=False)\
         .limit(limit)\
         .execute()
-    return res.data or []
+
+    # res = await spbase.table(TABLE_MESSAGE)\
+    #     .select("role,content,created_at")\
+    #     .eq("session_id", session_id)\
+    #     .order("created_at", desc=False)\
+    #     .limit(limit)\
+    #     .execute()
+    return res.data or []
 
 
 async def messenger_wait_human(sp: AsyncClient, session_id: str) ->  bool:
