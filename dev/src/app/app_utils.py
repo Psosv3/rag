@@ -321,7 +321,7 @@ async def list_messages(spbase: AsyncClient, session_id: str, limit: int = 200) 
     #     .order("created_at", desc=False)\
     #     .limit(limit)\
     #     .execute()
-    return res.data or []
+    return res.data or []
 
 
 async def messenger_wait_human(sp: AsyncClient, session_id: str) ->  bool:
