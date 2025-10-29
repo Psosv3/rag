@@ -6,25 +6,15 @@ from langchain_community.vectorstores import FAISS
 from dotenv import load_dotenv
 from typing import Optional, Union, List, Dict
 from langchain.schema import Document
-import uuid
 import asyncio
 from pathlib import Path
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.docstore.in_memory import InMemoryDocstore
-from flashrank import Ranker
-from langchain_community.document_compressors import FlashrankRerank
-from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
 from utils.utils import load_documents, split_documents, _tokens, _lexical_hit
 from llm_model.model_server import client_mistral, mistral_llm
 
 # Load environment variables
 load_dotenv()
-
-# FlashRank setup
-rerank_top_n = 5
-flashrank_model = "ms-marco-MultiBERT-L-12" #"ms-marco-TinyBERT-L-2-v2" # "bce-reranker-base_v1"  # Multilingual
-client_ranker = Ranker(model_name=flashrank_model)
-compressor = FlashrankRerank(client=client_ranker, top_n=rerank_top_n)
 
 SELF_CHECK_PROMPT = (
     "Vérifie la réponse suivante par rapport au contexte fourni. "
