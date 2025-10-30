@@ -126,12 +126,14 @@ async def upload_file(file: UploadFile = File(...),
                       current_user: AuthUser = Depends(get_current_user),
                       augment_rag : bool = True):
     """Endpoint pour uploader un fichier PDF ou DOCX pour l'entreprise de l'utilisateur."""
-
     ext = Path(file.filename).suffix.lower()
+
     if ext not in settings.ALLOWED_UPLOAD_EXTS:
         raise HTTPException(status_code=400, detail="Seuls les fichiers PDF et DOCX sont acceptés.")
+    
     mime_guess, _ = mimetypes.guess_type(file.filename)
     mime_hint = (mime_guess or file.content_type or "").lower()
+
     if ext == ".pdf" and "pdf" not in mime_hint: # Make sure the extension and MIME type agree
         raise HTTPException(status_code=400, detail="MIME type mismatch for PDF")
     if ext == ".docx" and ("word" not in mime_hint and "officedocument" not in mime_hint):
@@ -220,8 +222,7 @@ async def ask_question_public(req: Request,
             
             # 1) Persist user message & load conv history
             await save_supabase_message(spbase, session_id, "user", user_question)
-            conv_history = await list_messages(spbase, session_id, limit=60)
-            conv_history = conv_history[-8:] if conv_history else []
+            conv_history = await list_messages(spbase, session_id)
 
             # 1) Prioritize escalate-ready case
             if await is_ready_to_escalate(redis, request.company_id, session_id):
@@ -486,13 +487,6 @@ async def get_document_content(
         company_data_dir = get_company_data_dir(company_id, DATA_DIR)
         file_path = os.path.join(company_data_dir, filename)
         
-        print(f"[DEBUG] Tentative de lecture du fichier:")
-        print(f"  - filename: {filename}")
-        print(f"  - company_id: {company_id}")
-        print(f"  - company_data_dir: {company_data_dir}")
-        print(f"  - file_path: {file_path}")
-        print(f"  - exists: {os.path.exists(file_path)}")
-
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail=f"Fichier {filename} non trouvé dans {company_data_dir}")
 
@@ -500,14 +494,12 @@ async def get_document_content(
             raise HTTPException(status_code=400, detail="Seuls les fichiers DOCX peuvent être lus pour édition")
 
         # Lire le contenu du fichier DOCX
-        print(f"[DEBUG] Lecture du document DOCX...")
         doc = Document(file_path)
         paragraphs = []
         for para in doc.paragraphs:
             paragraphs.append(para.text)
         
         content = "\n".join(paragraphs)
-        print(f"[DEBUG] Document lu avec succès. Longueur: {len(content)} caractères")
         
         return {
             "filename": filename,
@@ -622,11 +614,6 @@ async def download_document(
         company_data_dir = get_company_data_dir(company_id, DATA_DIR)
         file_path = os.path.join(company_data_dir, filename)
 
-        print(f"[DEBUG] Téléchargement du fichier:")
-        print(f"  - filename: {filename}")
-        print(f"  - file_path: {file_path}")
-        print(f"  - exists: {os.path.exists(file_path)}")
-
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail=f"Fichier {filename} non trouvé")
 
@@ -691,8 +678,7 @@ async def delete_document(
             "company_id": company_id,
             "filename": filename,
         }
-    except HTTPException:
-        raise
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la suppression du document: {str(e)}")
 
@@ -794,7 +780,7 @@ async def submit_feedback(
             detail=f"Erreur lors de l'enregistrement du feedback: {str(e)}"
         )
 
-@app.get("/")
+@app.get("/////////")
 async def root():
     return {
         "message": "Bienvenue sur l'API RAG avec multitenancy",
