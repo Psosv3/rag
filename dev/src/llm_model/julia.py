@@ -2,7 +2,7 @@ from pydantic import ValidationError
 from pathlib import Path
 from tools.functions import read_instructions, handle_stream_events
 from tools.for_agents import read_dir_struct, read_file_contents
-from .model_server import planner_model, planner_core_model, executor_model, mcp_server_tool, mcp_server_escalator
+from .model_server import planner_model, planner_model_backup, planner_core_model, executor_model, mcp_server_tool, mcp_server_escalator
 from agents import Agent, Runner, AgentOutputSchema
 from agents.model_settings import ModelSettings
 from dotenv import load_dotenv
@@ -44,28 +44,54 @@ escalator_agent = Agent(
 
 
 # Planner Agent
-async def julia_planner(user_message,
-                        output_schema = output_schema
-                        )-> PlannerOutput:
-    
-    chat_completion  = await planner_model.chat.completions.create(
-        model=planner_core_model,
-        messages=user_message,
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "PlannerOutput",
-                "schema": output_schema,
-                "strict": True
-                }
-            },
-        temperature=0.05,
-        top_p=0.95,
-        seed = 127,
-        stream=False,
-    )
-    content = chat_completion.choices[0].message.content.strip() or "{}"
-
+async def julia_planner(user_message, output_schema=output_schema) -> PlannerOutput:
+    try:
+        chat_completion = await planner_model.chat.completions.create(
+            model=planner_core_model,
+            messages=user_message,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "PlannerOutput",
+                    "schema": output_schema,
+                    "strict": True
+                    }
+                },
+            temperature=0.05,
+            top_p=0.95,
+            seed = 127,
+            stream=False,
+        )
+        content = chat_completion.choices[0].message.content.strip() or "{}"
+    except Exception as e:
+        try:
+            chat_completion  = await planner_model_backup.chat.completions.create(
+                model=planner_core_model,
+                messages=user_message,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "PlannerOutput",
+                        "schema": output_schema,
+                        "strict": True
+                        }
+                    },
+                temperature=0.05,
+                top_p=0.95,
+                seed = 127,
+                stream=False,
+            )
+            content = chat_completion.choices[0].message.content.strip() or "{}"
+        except Exception as e:
+            content = PlannerOutput(
+                action_type="answer",
+                tools_to_call=[],
+                continue_discussion=True,
+                citations_required=False,
+                exec_required=False,
+                exec_inst="",
+                user_visible_answer="Désolé, il semble que j'ai perdu ma connexion. Pourriez-vous répéter svp ?"
+            )
     try:
         return PlannerOutput.model_validate_json(content)     # Valide et convertit en instance Pydantic
     except ValidationError :
@@ -76,9 +102,9 @@ async def julia_planner(user_message,
             citations_required=False,
             exec_required=False,
             exec_inst="",
-            user_visible_answer=None
+            user_visible_answer="Désolé, il semble que j'ai perdu ma connexion. Pourriez-vous répéter svp ?"
         )
-
+    
 # Executor Agent
 async def julia_executor(exec_inst: str, mcp_server=mcp_server_tool):
     async with mcp_server:

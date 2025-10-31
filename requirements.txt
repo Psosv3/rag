@@ -38,3 +38,7 @@ openai-agents
 openai
 google-cloud-translate
 reportlab
+langchain<0.2
+langchain-community
+langchain-openai
+langchain-mistralai

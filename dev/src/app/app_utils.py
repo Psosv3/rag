@@ -294,33 +294,12 @@ async def get_or_write_company_resume(spbase: AsyncClient, company_id: str, acti
         return None
 
 async def list_messages(spbase: AsyncClient, session_id: str, limit: int = 200) -> List[dict]:
-    from datetime import datetime, date, time, timedelta, timezone
-    # Si tes timestamps sont en UTC :
-    tz = timezone.utc
-
-    # 👉 Si tu veux filtrer selon l'heure locale (ex: Europe/Paris), utilise :
-    # from zoneinfo import ZoneInfo
-    # tz = ZoneInfo("Europe/Paris")
-
-    today = datetime.now(tz).date()
-    start = datetime.combine(today, time.min, tzinfo=tz)      # 00:00:00
-    end   = start + timedelta(days=1)                          # demain 00:00:00 (exclu)
-
     res = await spbase.table(TABLE_MESSAGE)\
         .select("role,content,created_at")\
         .eq("session_id", session_id)\
-        .gte("created_at", start.isoformat())\
-        .lt("created_at", end.isoformat())\
         .order("created_at", desc=False)\
         .limit(limit)\
         .execute()
-
-    # res = await spbase.table(TABLE_MESSAGE)\
-    #     .select("role,content,created_at")\
-    #     .eq("session_id", session_id)\
-    #     .order("created_at", desc=False)\
-    #     .limit(limit)\
-    #     .execute()
     return res.data or []
 
 
@@ -621,6 +600,7 @@ async def load_intern_contact(sp: AsyncClient, company_id: str) -> List[Dict[str
     return res.data or []
 
 async def safe_write_augmented_file(file: UploadFile, destination: Path):
+
     ext = Path(file.filename).suffix.lower()
     content = await file.read()  # read entire file into memory
 
@@ -633,8 +613,11 @@ async def safe_write_augmented_file(file: UploadFile, destination: Path):
 
     if not original_text.strip():
         raise HTTPException(status_code=422, detail="File empty or unreadable")
-
-    augmented_text = await rewrite_rag_augmentor(original_text)
+    
+    try:
+        augmented_text = await rewrite_rag_augmentor(original_text)
+    except :
+        augmented_text = original_text
 
     if ext == ".pdf":
         save_to_pdf(augmented_text, destination)

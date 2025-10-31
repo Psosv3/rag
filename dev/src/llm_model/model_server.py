@@ -2,6 +2,7 @@
 from agents import OpenAIChatCompletionsModel
 from agents import AsyncOpenAI as AgentsAsyncOpenAI 
 from groq import AsyncGroq
+from openai import AsyncOpenAI
 from agents.mcp  import MCPServerSse
 from mistralai import Mistral
 import os
@@ -12,9 +13,11 @@ load_dotenv()
 assert os.getenv("OPENAI_API_KEY") 
 assert os.getenv("MISTRAL_API_KEY") 
 assert os.getenv("GROQ_API_KEY") 
+assert os.getenv("BASETEN_API_KEY") 
 openai_key = os.getenv("OPENAI_API_KEY")
 mistral_api_key = os.getenv("MISTRAL_API_KEY")
 groq_api_key = os.getenv("GROQ_API_KEY")
+baseten_api_key = os.getenv("BASETEN_API_KEY")
 
 ###
 client_mistral = Mistral(api_key=mistral_api_key)
@@ -23,6 +26,8 @@ mistral_llm = "mistral-small-latest"
 ###
 planner_model = AsyncGroq(api_key=groq_api_key)
 planner_core_model = "openai/gpt-oss-120b"
+
+planner_model_backup = AsyncOpenAI(api_key=baseten_api_key, base_url="https://inference.baseten.co/v1")
 
 ###
 executor_model = OpenAIChatCompletionsModel( 
