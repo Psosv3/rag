@@ -66,6 +66,7 @@ from .app_utils import (
     messenger_wait_human,
     prep_input_embed,
     get_or_write_company_resume,
+    get_company_chatbot_signature,
     )
 # rag & models
 from rag.rag import get_rag_context, rebuild_company_index, build_index, get_company_data_dir, get_company_stats, clear_company_cache
@@ -93,6 +94,7 @@ async def lifespan(app: FastAPI):
     app.state.spbase = spbase
     app.state.companies = {}
     app.state.company_resumes = {}
+    app.state.company_signatures = {}
     await refresh_companies_into_state(app)
     try:
         yield
@@ -464,6 +466,20 @@ async def get_public_sessions(company_id: str, external_user_id: Optional[str] =
 async def get_public_messages(session_id: str, spbase: AsyncClient = Depends(get_supabase)):
     msgs = await list_messages(spbase, session_id)
     return msgs
+
+@app.get("/company_info_public/{company_id}")
+async def get_company_info_public(company_id: str, spbase: AsyncClient = Depends(get_supabase)):
+    """
+    Endpoint public pour récupérer les informations d'une entreprise (notamment chatbot_signature).
+    """
+    try:
+        signature = await get_company_chatbot_signature(spbase, company_id)
+        return {
+            "company_id": company_id,
+            "chatbot_signature": signature,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des informations: {str(e)}")
 
 @app.get("/stats/")
 async def get_stats_endpoint(current_user: AuthUser = Depends(get_current_user)):
