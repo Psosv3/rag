@@ -26,6 +26,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - GOOGLE_APPLICATION_CREDENTIALS=/app/secret_key/vaulted-harbor-471117-v9-98f4eedafa99.json
       - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - BASETEN_API_KEY=${BASETEN_API_KEY}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
