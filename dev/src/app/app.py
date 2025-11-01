@@ -66,6 +66,7 @@ from .app_utils import (
     messenger_wait_human,
     prep_input_embed,
     get_or_write_company_resume,
+    get_company_chatbot_signature,
     )
 # rag & models
 from rag.rag import get_rag_context, rebuild_company_index, build_index, get_company_data_dir, get_company_stats, clear_company_cache
@@ -93,6 +94,7 @@ async def lifespan(app: FastAPI):
     app.state.spbase = spbase
     app.state.companies = {}
     app.state.company_resumes = {}
+    app.state.company_signatures = {}
     await refresh_companies_into_state(app)
     try:
         yield
@@ -465,6 +467,37 @@ async def get_public_sessions(company_id: str, external_user_id: Optional[str] =
 async def get_public_messages(session_id: str, spbase: AsyncClient = Depends(get_supabase)):
     msgs = await list_messages(spbase, session_id)
     return msgs
+
+@app.get("/company_info_public/{company_id}")
+async def get_company_info_public(company_id: str, spbase: AsyncClient = Depends(get_supabase)):
+    """
+    Endpoint public pour récupérer les informations d'une entreprise (notamment chatbot_signature et background_color).
+    """
+    try:
+        signature = await get_company_chatbot_signature(spbase, company_id)
+        
+        # Récupérer le background_color depuis company_integrations
+        background_color = "#4F46E5"  # Valeur par défaut
+        try:
+            integration_res = await spbase.table("company_integrations")\
+                .select("background_color")\
+                .eq("company_id", company_id)\
+                .limit(1)\
+                .execute()
+            
+            if integration_res.data and len(integration_res.data) > 0:
+                background_color = integration_res.data[0].get("background_color", background_color)
+        except Exception as e:
+            # Si erreur lors de la récupération, on utilise la couleur par défaut
+            pass
+        
+        return {
+            "company_id": company_id,
+            "chatbot_signature": signature,
+            "background_color": background_color,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des informations: {str(e)}")
 
 @app.get("/stats/")
 async def get_stats_endpoint(current_user: AuthUser = Depends(get_current_user)):

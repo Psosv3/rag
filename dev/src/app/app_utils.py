@@ -406,23 +406,27 @@ async def refresh_companies_into_state(app: FastAPI) -> None:
         return
 
     try:
-        res = await spbase.table(TABLE_COMPANY).select("id, name, company_resume").execute()
+        res = await spbase.table(TABLE_COMPANY).select("id, name, company_resume, chatbot_signature").execute()
         rows = res.data or []
 
         companies = {r["id"]: str(r["name"]) for r in rows if r and r.get("id") and r.get("name")}
         company_resumes = {r["id"]: str(r["company_resume"]) for r in rows if r and r.get("id") and r.get("company_resume")}
+        company_signatures = {r["id"]: str(r["chatbot_signature"]) for r in rows if r and r.get("id") and r.get("chatbot_signature")}
 
         # État en mémoire
         app.state.companies = companies
         app.state.company_resumes = company_resumes
+        app.state.company_signatures = company_signatures
 
         # Redis: delete puis (re)write, en 1 pipeline
         pipe = redis_client.pipeline()
-        pipe.delete("companies", "company_resumes")
+        pipe.delete("companies", "company_resumes", "company_signatures")
         if companies:
             pipe.hset("companies", mapping=companies)
         if company_resumes:
             pipe.hset("company_resumes", mapping=company_resumes)
+        if company_signatures:
+            pipe.hset("company_signatures", mapping=company_signatures)
         await pipe.execute()
     except Exception as e:
         return 
@@ -443,6 +447,33 @@ async def get_company_resume(app: FastAPI, company_id: str) -> str:
         return app.state.company_resumes[company_id]
     name = await redis_client.hget("companies", company_id)
     return name or "votre entreprise"
+
+async def get_company_chatbot_signature(spbase: AsyncClient, company_id: str) -> Optional[str]:
+    """
+    Récupère la signature du chatbot pour une entreprise donnée.
+    Essaie d'abord depuis le cache Redis, puis depuis Supabase.
+    """
+    # Essayer depuis Redis
+    signature = await redis_client.hget("company_signatures", company_id)
+    if signature:
+        return signature
+    
+    # Si pas dans Redis, récupérer depuis Supabase
+    try:
+        res = await spbase.table(TABLE_COMPANY)\
+            .select("chatbot_signature")\
+            .eq("id", company_id)\
+            .execute()
+        data = res.data or []
+        if data and data[0].get("chatbot_signature"):
+            signature = data[0]["chatbot_signature"]
+            # Mettre en cache dans Redis
+            await redis_client.hset("company_signatures", company_id, signature)
+            return signature
+    except Exception as e:
+        pass
+    
+    return None
 
 
 ###################################################### Upload helpers ######################################################
