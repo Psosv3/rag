@@ -413,7 +413,7 @@ async def ask_question_public(req: Request,
 
         except Exception as e:
             await log_audit(redis, {"type": "error", "at": "ask_public", "error": str(e)})
-            yield sse_data({"error": f"Erreur lors de la génération de la réponse: {str(e)}"})
+            raise HTTPException(status_code=500, detail=f"Erreur lors de la génération de la réponse: {str(e)}")
 
     # 3) Single-generator SSE with heartbeat on timeout
     async def merged_stream():
