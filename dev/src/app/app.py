@@ -471,13 +471,30 @@ async def get_public_messages(session_id: str, spbase: AsyncClient = Depends(get
 @app.get("/company_info_public/{company_id}")
 async def get_company_info_public(company_id: str, spbase: AsyncClient = Depends(get_supabase)):
     """
-    Endpoint public pour récupérer les informations d'une entreprise (notamment chatbot_signature).
+    Endpoint public pour récupérer les informations d'une entreprise (notamment chatbot_signature et background_color).
     """
     try:
         signature = await get_company_chatbot_signature(spbase, company_id)
+        
+        # Récupérer le background_color depuis company_integrations
+        background_color = "#4F46E5"  # Valeur par défaut
+        try:
+            integration_res = await spbase.table("company_integrations")\
+                .select("background_color")\
+                .eq("company_id", company_id)\
+                .limit(1)\
+                .execute()
+            
+            if integration_res.data and len(integration_res.data) > 0:
+                background_color = integration_res.data[0].get("background_color", background_color)
+        except Exception as e:
+            # Si erreur lors de la récupération, on utilise la couleur par défaut
+            pass
+        
         return {
             "company_id": company_id,
             "chatbot_signature": signature,
+            "background_color": background_color,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des informations: {str(e)}")
