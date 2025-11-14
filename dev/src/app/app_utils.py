@@ -273,6 +273,68 @@ async def save_supabase_message(spbase: AsyncClient, session_id: str, role: str,
     result["message_id"] = message_id  # S'assurer que le message_id est retourné
     return result
 
+async def create_notification(
+    spbase: AsyncClient,
+    company_id: str,
+    notification_type: str,
+    title: str,
+    content: str,
+    session_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    priority: str = "normal",
+    metadata: Optional[Dict[str, Any]] = None,
+    action_url: Optional[str] = None,
+    action_label: Optional[str] = None
+) -> dict:
+    """
+    Fonction flexible pour créer n'importe quel type de notification
+    
+    Args:
+        spbase: Client Supabase
+        company_id: ID de l'entreprise
+        notification_type: Type de notification (ex: 'manual_response_required', 'negative_feedback')
+        title: Titre court
+        content: Description détaillée
+        session_id: ID de session (optionnel)
+        message_id: ID de message (optionnel)
+        priority: Priorité ('low', 'normal', 'high', 'urgent')
+        metadata: Données supplémentaires en JSON
+        action_url: URL d'action (optionnel)
+        action_label: Label du bouton d'action (optionnel)
+    """
+    notification_data = {
+        "company_id": company_id,
+        "type": notification_type,
+        "title": title,
+        "content": content,
+        "priority": priority,
+        "read": False,
+        "created_at": datetime.now().isoformat()
+    }
+    
+    # Ajouter les champs optionnels seulement s'ils sont fournis
+    if session_id:
+        notification_data["session_id"] = session_id
+    if message_id:
+        notification_data["message_id"] = message_id
+    if metadata:
+        notification_data["metadata"] = metadata
+    if action_url:
+        notification_data["action_url"] = action_url
+    if action_label:
+        notification_data["action_label"] = action_label
+    
+    try:
+        res = await spbase.table("notifications").insert(notification_data).execute()
+        result = first_row(res)
+        if isinstance(result, list) and result:
+            return result[0]
+        return result if result else {}
+    except Exception as e:
+        # Log l'erreur mais ne pas bloquer le flux principal
+        print(f"Erreur lors de la création de la notification: {str(e)}")
+        return {}
+
 async def get_or_write_company_resume(spbase: AsyncClient, company_id: str, action: str, resume_text: Optional[str] = None) :
     if action == "get":
         res = await spbase.table(TABLE_COMPANY)\

@@ -9,6 +9,7 @@ import contextlib
 from pathlib import Path
 from typing import Optional, List, AsyncGenerator, Annotated
 from contextlib import asynccontextmanager
+from datetime import datetime
 import asyncio
 from dotenv import load_dotenv
 # FastAPI
@@ -48,6 +49,7 @@ from .app_utils import (
     get_or_create_session,
     is_banned,
     save_supabase_message,
+    create_notification,
     get_cached_rag_docs,
     cache_rag_docs,
     get_company_name_resume,
@@ -233,6 +235,24 @@ async def ask_question_public(req: Request,
                     await remove_escalate_session(redis, request.company_id, session_id)
 
                     await escalate_to_humans(conv_history, spbase, session_id, request)
+
+                    # Créer une notification pour le dashboard
+                    await create_notification(
+                        spbase=spbase,
+                        company_id=request.company_id,
+                        notification_type="manual_response_required",
+                        title="Intervention manuelle requise",
+                        content=f"Une conversation a été escaladée et nécessite une réponse manuelle. Dernier message: {user_question[:100]}...",
+                        session_id=session_id,
+                        priority="high",
+                        metadata={
+                            "reason": "escalation_completed",
+                            "last_user_message": user_question[:200],
+                            "escalation_time": datetime.now().isoformat()
+                        },
+                        action_url=f"/dashboard/chat?session={session_id}",
+                        action_label="Répondre maintenant"
+                    )
 
                     answer_escalate = "C'est bon! Mon responsable a été informé. Il reviendra vers vous au plus vite."
                     message_data = await save_supabase_message(spbase, session_id, "assistant", answer_escalate, manual_response=True)
@@ -791,10 +811,48 @@ async def submit_feedback(
                 detail="Message non trouvé ou non éligible au feedback"
             )
         
-        # Log pour analytics
-        # await log_audit(
-        #     f"Feedback {request.feedback} sur message {request.message_id} de la session {request.session_id}"
-        # )
+        # Créer une notification pour les feedbacks négatifs
+        if request.feedback == 'dislike':
+            # Compter le nombre de feedbacks négatifs dans cette session
+            negative_feedback_count = await spbase.table('public_chat_messages')\
+                .select('id', count='exact')\
+                .eq('session_id', request.session_id)\
+                .eq('user_feedback', 'dislike')\
+                .execute()
+            
+            count = negative_feedback_count.count if negative_feedback_count.count else 1
+            
+            # Déterminer la priorité selon le nombre de feedbacks négatifs
+            if count >= 3:
+                priority = "urgent"
+                title = f"⚠️ {count} feedbacks négatifs"
+                content = f"Attention ! Cette conversation a reçu {count} feedbacks négatifs. Une intervention est recommandée."
+            elif count >= 2:
+                priority = "high"
+                title = f"{count} feedbacks négatifs"
+                content = f"Cette conversation a reçu {count} feedbacks négatifs."
+            else:
+                priority = "normal"
+                title = "Feedback négatif reçu"
+                content = "Un utilisateur a donné un feedback négatif sur une réponse."
+            
+            # Créer la notification
+            await create_notification(
+                spbase=spbase,
+                company_id=request.company_id,
+                notification_type="negative_feedback" if count < 3 else "multiple_negative_feedback",
+                title=title,
+                content=content,
+                session_id=request.session_id,
+                message_id=request.message_id,
+                priority=priority,
+                metadata={
+                    "feedback_count": count,
+                    "consecutive_negative": count >= 2
+                },
+                action_url=f"/dashboard/chat?session={request.session_id}",
+                action_label="Analyser la conversation"
+            )
         
         return {
             "success": True,
