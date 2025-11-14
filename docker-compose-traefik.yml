@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  rag-api:
+    build: .
+    container_name: rag-api
+    restart: unless-stopped
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    networks:
+      - traefik
+      - rag-network
+    labels:
+      # Activer Traefik pour ce service
+      - "traefik.enable=true"
+      
+      # Configuration du domaine
+      - "traefik.http.routers.rag-api.rule=Host(`api-rag.onexus.tech`)"
+      - "traefik.http.routers.rag-api.entrypoints=websecure"
+      - "traefik.http.routers.rag-api.tls.certresolver=letsencrypt"
+      
+      # Configuration du service
+      - "traefik.http.services.rag-api.loadbalancer.server.port=8000"
+      
+      # Redirection HTTP vers HTTPS
+      - "traefik.http.routers.rag-api-http.rule=Host(`api-rag.onexus.tech`)"
+      - "traefik.http.routers.rag-api-http.entrypoints=web"
+      - "traefik.http.routers.rag-api-http.middlewares=redirect-to-https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true"
+      
+      # Headers de sécurité
+      - "traefik.http.routers.rag-api.middlewares=security-headers"
+      - "traefik.http.middlewares.security-headers.headers.accesscontrolallowmethods=GET,OPTIONS,PUT,POST,DELETE"
+      - "traefik.http.middlewares.security-headers.headers.accesscontrolalloworiginlist=*"
+      - "traefik.http.middlewares.security-headers.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.security-headers.headers.addvaryheader=true"
+      - "traefik.http.middlewares.security-headers.headers.frameDeny=true"
+      - "traefik.http.middlewares.security-headers.headers.browserXssFilter=true"
+      - "traefik.http.middlewares.security-headers.headers.contentTypeNosniff=true"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health/').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  traefik:
+    external: true
+  rag-network:
+    driver: bridge 

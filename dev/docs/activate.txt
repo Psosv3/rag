@@ -1,0 +1,22 @@
+python -m venv .venv
+
+source .venv/Scripts/activate
+
+pip install uv
+
+uv pip install -r requirements.txt
+
+uvicorn --app-dir dev/src app.app:app --host 0.0.0.0 --port 8000
+
+uvicorn --app-dir dev/src app.app:app --log-config dev/log/log_config.yaml --host 0.0.0.0 --port 8000
+
+
+
+
+
+
+source .venv/Scripts/activate
+uvicorn --app-dir dev/src app.app:app --host 0.0.0.0 --port 8000
+
+
+

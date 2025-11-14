@@ -1,0 +1,71 @@
+{
+  "question": "envoie un mail de bienvenue à Sata Rakotoson via le compte contact@onexus.tech",
+  "company_id": "b28cfe88-807b-49de-97f7-fd974cfd0d17",
+  "session_id": "string",
+  "external_user_id": "string",
+  "langue": "Français"
+}
+
+{
+  "question": "je ne suis pas du tout content de mon produit que j'ai acheté. C'est la crème hydratante pour peau noir. J'ai beaucoup d'eczéma là. Je veux faire une réclamation. Informez votre supérieur en lui envoyant un email que c'est la fin pour vous et votre arnaque.",
+  "company_id": "b28cfe88-807b-49de-97f7-fd974cfd0d17",
+  "session_id": "string",
+  "external_user_id": "string",
+  "langue": "Français"
+}
+
+{
+  "question": "le numéro de commande est le nzfdoknz452, le nom du produit est JDND et je l'ai acheté hier",
+  "company_id": "b28cfe88-807b-49de-97f7-fd974cfd0d17",
+  "session_id": "string",
+  "external_user_id": "string",
+  "langue": "Français"
+}
+
+{
+  "question": "je ne suis pas du tout content de la place où je gare ma moto. C'est très loin de mon bureau qlors que je porte une canne. Pendant l'hiver, ça glisse de partout. Je veux une place plus près du bureau. Informez le responsable.",
+  "company_id": "b28cfe88-807b-49de-97f7-fd974cfd0d17",
+  "session_id": "string",
+  "external_user_id": "string",
+  "langue": "Français"
+}
+
+{
+  "question": "serait-il possible de réserver un créneau le lundi 22er septembre 2025 pour discuter avec le responsable pour discuter du partenariat avec notre société ODOS ? une créneau de 36 min suffirait. Par exemple à 18h Madagascar. mon adresse email est madassur.mg@gmail.com",
+  "company_id": "b28cfe88-807b-49de-97f7-fd974cfd0d17",
+  "session_id": "string",
+  "external_user_id": "cqscsqc",
+  "langue": "Français"
+}
+
+{
+  "question": "Informe le responsable informatique qu'il y a une société qui souhaite proposer des ordinateur de bureau pour remplacer vos matériels encours'.",
+  "company_id": "b28cfe88-807b-49de-97f7-fd974cfd0d17",
+  "session_id": "string",
+  "external_user_id": "string",
+  "langue": "Français"
+}
+
+{
+  "question": "mieraba tompoko, saika hanontany kely oe misokatra ve nareo rapitso ?.",
+  "company_id": "b28cfe88-807b-49de-97f7-fd974cfd0d17",
+  "session_id": "string",
+  "external_user_id": "string",
+  "langue": "Malgache"
+}
+
+{
+  "question": "Salama tompoko, mba raha rendez-vous svp",
+  "company_id": "b28cfe88-807b-49de-97f7-fd974cfd0d17",
+  "session_id": "string",
+  "external_user_id": "test_gasy5",
+  "langue": "Malgache"
+}
+
+{
+  "question": "@alatsinainy ho avy izao, @10h, hiresaka momban'ny fanadiovana trano, madassur.mg@gmail.com",
+  "company_id": "b28cfe88-807b-49de-97f7-fd974cfd0d17",
+  "session_id": "string",
+  "external_user_id": "test_gasy6",
+  "langue": "Malgache"
+}

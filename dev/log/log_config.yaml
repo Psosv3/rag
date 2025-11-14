@@ -1,0 +1,50 @@
+version: 1
+disable_existing_loggers: false
+
+formatters:
+  default:
+    format: "%(levelname)s %(name)s: %(message)s"
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: default
+    stream: ext://sys.stdout
+  silent:
+    class: logging.NullHandler
+
+loggers:
+  uvicorn:
+    level: INFO
+    handlers: [console]
+    propagate: false
+  uvicorn.error:
+    level: INFO
+    handlers: [console]
+    propagate: false
+  uvicorn.access:
+    level: INFO
+    handlers: [console]
+    propagate: false
+
+  httpx:
+    level: ERROR
+    handlers: [silent]
+    propagate: false
+  httpcore:
+    level: ERROR
+    handlers: [silent]
+    propagate: false
+
+  openai:
+    level: ERROR
+    handlers: [silent]
+    propagate: false
+  openai._base_client:
+    level: ERROR
+    handlers: [silent]
+    propagate: false
+
+root:
+  level: WARNING
+  handlers: [console]

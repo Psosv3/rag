@@ -6,20 +6,33 @@ services:
     container_name: rag-api
     restart: unless-stopped
     environment:
-      - PYTHONPATH=/app
+      - PYTHONPATH=/app:/app/dev/src
       - PYTHONUNBUFFERED=1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
       - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - REDIS_URL=${REDIS_URL}
+      - JWT_ALGORITHM=${JWT_ALGORITHM}
+      - JWT_SECRET=${JWT_SECRET}
+      - ALLOW_ORIGINS=${ALLOW_ORIGINS}
+      - HEARTBEAT_SEC=${HEARTBEAT_SEC}
+      - TASK_TIMEOUT_SEC=${TASK_TIMEOUT_SEC}
+      - MAX_UPLOAD_MB=${MAX_UPLOAD_MB}
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/secret_key/vaulted-harbor-471117-v9-98f4eedafa99.json
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - BASETEN_API_KEY=${BASETEN_API_KEY}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      - ./secret_key:/app/secret_key
     ports:
-      - "${EXTERNAL_API_PORT:-18000}:${API_PORT:-8000}"  # expose API pour debug local
+      - "8000:8000"  # API directement accessible
     networks:
       - rag-network
     healthcheck:
@@ -28,30 +41,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-
-  nginx:
-    image: nginx:alpine
-    container_name: rag-nginx
-    restart: unless-stopped
-    depends_on:
-      rag-api:
-        condition: service_healthy
-    ports:
-      - "${EXTERNAL_HTTP_PORT:-8080}:80"
-      - "${EXTERNAL_HTTPS_PORT:-8443}:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
-      - ./nginx/api-rag.onexus.tech.conf:/etc/nginx/sites-available/api-rag.onexus.tech.conf
-      - ./ssl:/etc/nginx/ssl
-      - ./logs/nginx:/var/log/nginx
-      - /var/www/certbot:/var/www/certbot
-    networks:
-      - rag-network
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
 networks:
   rag-network:
