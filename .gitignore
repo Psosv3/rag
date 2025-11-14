@@ -12,6 +12,7 @@ env/
 
 # 🔐 Fichiers d'environnement
 *.env
+.env.dev
 
 # 📁 Fichiers de logs
 *.log
@@ -47,5 +48,7 @@ Thumbs.db
 
 requirements(backup).txt
 data/
+data-dev/
+logs-dev/
 secret_key/
 dev/src/instructions/.old/
