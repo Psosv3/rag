@@ -14,9 +14,10 @@ BASE = Path(__file__).resolve().parent.parents[2]
 
 ############################# Instructions planner & executeur #############################
 
-planner_instructions = read_instructions(BASE/"dev/src/instructions/planner_instruction.md")
-executor_instructions = (read_instructions(BASE/"dev/src/instructions/executor_instruction.md"))
-escalator_instructions = (read_instructions(BASE/"dev/src/instructions/escalator_instruction.md"))
+planner_syst_instructions = read_instructions(BASE/"dev/src/instructions/planner_syst_instruct.md")
+planner_dev_instructions = read_instructions(BASE/"dev/src/instructions/planner_dev_instruct.md")
+executor_instructions = (read_instructions(BASE/"dev/src/instructions/executor_instruct.md"))
+escalator_instructions = (read_instructions(BASE/"dev/src/instructions/escalator_instruct.md"))
 
 ############################# Features additionnels #############################
 
@@ -44,7 +45,7 @@ escalator_agent = Agent(
 
 
 # Planner Agent
-async def julia_planner(user_message, output_schema=output_schema) -> PlannerOutput:
+async def onexia_planner(user_message, output_schema=output_schema) -> PlannerOutput:
     try:
         chat_completion = await planner_model.chat.completions.create(
             model=planner_core_model,
@@ -106,7 +107,7 @@ async def julia_planner(user_message, output_schema=output_schema) -> PlannerOut
         )
     
 # Executor Agent
-async def julia_executor(exec_inst: str, mcp_server=mcp_server_tool):
+async def onexia_executor(exec_inst: str, mcp_server=mcp_server_tool):
     async with mcp_server:
         result = await Runner.run(
             executor_agent,
@@ -115,7 +116,7 @@ async def julia_executor(exec_inst: str, mcp_server=mcp_server_tool):
         return result.final_output
     
 # Escalator Agent
-async def julia_escalator(exec_inst: str, mcp_server=mcp_server_escalator):
+async def onexia_escalator(exec_inst: str, mcp_server=mcp_server_escalator):
     async with mcp_server:
         result = await Runner.run(
             escalator_agent,

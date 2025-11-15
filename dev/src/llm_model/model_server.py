@@ -38,12 +38,12 @@ executor_model = OpenAIChatCompletionsModel(
 ###
 mcp_tool_url = "https://flow.onexus.space/api/v1/mcp/T43HNxLiNBYWvnRzpfq6y/sse"
 mcp_server_tool = MCPServerSse(
-    name="mcp_julia_executor",             # this is the tool name you'll call
+    name="mcp_onexia_executor",             # this is the tool name you'll call
     params={"url": mcp_tool_url}    # the URL for the SSE endpoint
 )
 
 mcp_esc_url = "https://flow.onexus.space/api/v1/mcp/RkNbUg9DshpWj8uo4dItY/sse"
 mcp_server_escalator = MCPServerSse(
-    name="mcp_julia_escalator",             # this is the tool name you'll call
+    name="mcp_onexia_escalator",             # this is the tool name you'll call
     params={"url": mcp_esc_url}    # the URL for the SSE endpoint
 )
