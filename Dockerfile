@@ -42,4 +42,6 @@ ENV PYTHONUNBUFFERED=1
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Commande pour démarrer l'application
+#todo: original 👇
 CMD ["/app/.venv/bin/uvicorn", "dev.src.app.app:app", "--host", "0.0.0.0", "--port", "8000"] 
+# CMD ["/app/.venv/bin/uvicorn", "app.app:app", "--app-dir", "dev/src", "--workers", "4", "--loop", "uvloop", "--http", "httptools", "--host", "0.0.0.0", "--port", "8000"] 
