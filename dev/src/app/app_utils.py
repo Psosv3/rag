@@ -158,7 +158,7 @@ async def get_current_user(request: Request, credentials: HTTPAuthorizationCrede
 
     return current_user
 
-###################################################### Supabase ######################################################
+###################################################### Supabase #######################################################
 async def get_supabase(request: Request) -> AsyncClient:
     spbase: AsyncClient = request.app.state.spbase  # type: ignore[attr-defined]
     return spbase
@@ -333,9 +333,8 @@ async def create_notification(
             return result[0]
         return result if result else {}
     except Exception as e:
-        # Log l'erreur mais ne pas bloquer le flux principal
-        print(f"Erreur lors de la création de la notification: {str(e)}")
-        return {}
+        raise HTTPException(status_code=502, detail=f"Erreur lors de la création de la notification: {str(e)}")
+
 
 async def get_or_write_company_resume(spbase: AsyncClient, company_id: str, action: str, resume_text: Optional[str] = None) :
     if action == "get":
