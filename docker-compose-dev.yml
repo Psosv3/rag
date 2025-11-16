@@ -33,7 +33,7 @@ services:
       - ./logs-dev:/app/logs
       - ./secret_key:/app/secret_key
     ports:
-      - "8001:8000"  # API dev sur port 8001
+      - "8000:8000"  # API dev sur port 8000
     networks:
       - rag-network-dev
     healthcheck:
