@@ -1,0 +1,61 @@
+name: Deploy Dev to VPS
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  deploy:
+    name: Deploy to Development VPS
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 🚀 Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          script: |
+            echo "🔄 Début du déploiement..."
+            
+            # Aller dans le répertoire du projet
+            cd ${{ secrets.VPS_PROJECT_PATH }}
+            
+            # Afficher la branche actuelle
+            echo "📍 Branche actuelle:"
+            git branch --show-current
+            
+            # Récupérer les dernières modifications
+            echo "📥 Git pull..."
+            git fetch origin
+            git checkout dev
+            git pull origin dev
+            
+            # Arrêter les conteneurs existants
+            echo "⏹️  Arrêt des conteneurs..."
+            docker compose -f docker-compose-dev.yml down
+            
+            # Reconstruire et démarrer les conteneurs
+            echo "🔨 Build et démarrage des conteneurs..."
+            docker compose -f docker-compose-dev.yml up --build -d
+            
+            # Attendre que les services démarrent
+            echo "⏳ Attente du démarrage des services..."
+            sleep 15
+            
+            # Vérifier l'état des conteneurs
+            echo "✅ État des conteneurs:"
+            docker compose -f docker-compose-dev.yml ps
+            
+            # Afficher les logs récents
+            echo "📋 Logs récents:"
+            docker compose -f docker-compose-dev.yml logs --tail=20
+            
+            # Nettoyer les ressources inutilisées
+            echo "🧹 Nettoyage..."
+            docker image prune -f
+            
+            echo "🎉 Déploiement terminé avec succès!"
