@@ -24,7 +24,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from redis.asyncio import Redis, ConnectionPool
 from supabase import create_async_client, AsyncClient
 # Utilities
-from utils.utils import system_message, safety_post_filter, build_chat_messages, controlled_fallback_response, sanitize_translate, translate, check_contact_and_name, dict_abreviation_mg
+from utils.utils import developper_message, safety_post_filter, controlled_fallback_response, sanitize_translate, translate, check_contact_and_name, dict_abreviation_mg
 from .app_utils import (
     # Constant
     TABLE_SESSION,
@@ -52,7 +52,7 @@ from .app_utils import (
     create_notification,
     get_cached_rag_docs,
     cache_rag_docs,
-    get_company_name_resume,
+    get_company_name_resume_prompt_signature,
     list_messages,
     forbiden_session,
     log_audit,
@@ -69,10 +69,12 @@ from .app_utils import (
     prep_input_embed,
     get_or_write_company_resume,
     get_company_chatbot_signature,
+    build_chat_messages,
+    stop_chatbot,
     )
 # rag & models
 from rag.rag import get_rag_context, rebuild_company_index, build_index, get_company_data_dir, get_company_stats, clear_company_cache
-from llm_model.julia import julia_planner, julia_executor, PlannerOutput
+from llm_model.onexia import onexia_planner, onexia_executor, PlannerOutput, planner_syst_instructions
 
 load_dotenv()
 
@@ -88,7 +90,7 @@ VECTORSTORES_CACHE = {}
 
 
 ###################################################### FastAPI app + lifespan ######################################################
-app = FastAPI(title="Julia_Onexus", description="API RAG multitenant (Supabase Data API + Redis + JWT)")
+app = FastAPI(title="Onexia", description="API RAG multitenant (Supabase Data API + Redis + JWT)")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -97,6 +99,7 @@ async def lifespan(app: FastAPI):
     app.state.companies = {}
     app.state.company_resumes = {}
     app.state.company_signatures = {}
+    app.state.company_extra_prompt = {}
     await refresh_companies_into_state(app)
     try:
         yield
@@ -185,6 +188,7 @@ async def express_build_index(current_user: AuthUser = Depends(get_current_user)
 @app.post("/ask_public/")
 async def ask_question_public(req: Request,
                               request: PublicQuestionRequest,
+                              #file: Optional[UploadFile] = File(None),
                               spbase: AsyncClient = Depends(get_supabase),
                               redis: Redis = Depends(get_redis),
                               ):
@@ -211,11 +215,12 @@ async def ask_question_public(req: Request,
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
 
-            # 0) Ban check or Messenger_waiting_human
+            # 0) General_Stop chatbot check or Ban check or Messenger_waiting_human
+            general_manual_response = await stop_chatbot(spbase, request.company_id)
             ban = await is_banned(redis, request.company_id, session_id)
             messenger_waiting_human = await messenger_wait_human(spbase, session_id)
 
-            if ban or messenger_waiting_human:
+            if general_manual_response or ban or messenger_waiting_human:
                 yield sse_data({
                     "answer": None,
                     "company_id": request.company_id,
@@ -292,18 +297,18 @@ async def ask_question_public(req: Request,
                 await cache_rag_docs(redis, request.company_id, input_to_embed, docs, ttl_seconds=300)
                 
             # 3) Build messages for LLM/agents
-            company_name, company_resume = await get_company_name_resume(app, request.company_id)
-            syst_msg = system_message(company_name, company_resume)
+            company_name, company_resume, company_extra_prompt, company_signature = await get_company_name_resume_prompt_signature(app, request.company_id)
+            syst_msg = planner_syst_instructions
+            dev_msg = developper_message(company_name, company_resume, company_extra_prompt)
             msgs = build_chat_messages(
                 messages_history=conv_history,
                 user_input=user_question,
                 context=docs,
                 system_message=syst_msg,
-                max_history_pairs=30,
+                dev_message=dev_msg,
             )
-
             # 4) Planner
-            planner_out: PlannerOutput = await julia_planner(msgs)
+            planner_out: PlannerOutput = await onexia_planner(msgs)
 
             if not planner_out.continue_discussion:
                 await forbiden_session(redis, request.company_id, session_id)
@@ -322,7 +327,8 @@ async def ask_question_public(req: Request,
                 return
 
             # 5) Simple branches
-            async def respond_and_log(text: str, langue : str) -> dict: # Helper to log assistant text
+            async def respond_and_log(text: str, langue : str, signature: str) -> dict: # Helper to log assistant text + add final signature
+                text += f"\n\n{signature}" if signature else ""
                 safe_answer = safety_post_filter(text)
                 message_data = await save_supabase_message(spbase, session_id, "assistant", safe_answer)
                 if langue.lower() in ("malgache", "malagasy","mg"):
@@ -333,12 +339,13 @@ async def ask_question_public(req: Request,
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
-                    "message_id": message_data.get("message_id")
+                    "message_id": message_data.get("message_id"),
+                    "signature": signature
                     }
 
             if planner_out.action_type == "reject":
                 reject = planner_out.user_visible_answer or "Désolé, je ne suis pas en mesure de vous aider sur ce point."
-                yield sse_data(await respond_and_log(reject, request.langue))
+                yield sse_data(await respond_and_log(reject, request.langue, company_signature))
                 return
             
             if planner_out.action_type == "clarify":
@@ -346,15 +353,15 @@ async def ask_question_public(req: Request,
                     "D'accord. Mais je ne suis pas sûr de clairement comprendre votre demande. "
                     "Pouvez-vous détailler encore un peu plus svp ?"
                 )
-                yield sse_data(await respond_and_log(clarif, request.langue))
+                yield sse_data(await respond_and_log(clarif, request.langue, company_signature))
                 return
             
             if planner_out.action_type == "answer":
                 if not planner_out.user_visible_answer:
                     clarif_bis = "Pouvez-vous me fournir un peu plus de détail svp ?"
-                    yield sse_data(await respond_and_log(clarif_bis, request.langue))
+                    yield sse_data(await respond_and_log(clarif_bis, request.langue, company_signature))
                     return
-                yield sse_data(await respond_and_log(planner_out.user_visible_answer, request.langue))
+                yield sse_data(await respond_and_log(planner_out.user_visible_answer, request.langue, company_signature))
                 return
 
             if planner_out.action_type == "escalate":
@@ -430,7 +437,7 @@ async def ask_question_public(req: Request,
 
             # 7) Fallback
             lang = "Français"
-            yield sse_data(await respond_and_log(controlled_fallback_response(lang, request.langue), request.langue))
+            yield sse_data(await respond_and_log(controlled_fallback_response(lang, request.langue), request.langue, company_signature))
             return
 
         except Exception as e:
@@ -522,7 +529,7 @@ async def get_company_info_public(company_id: str, spbase: AsyncClient = Depends
 @app.get("/stats/")
 async def get_stats_endpoint(current_user: AuthUser = Depends(get_current_user)):
     try:
-        stats = get_company_stats(current_user.company_id or "default-company", DATA_DIR)
+        stats = get_company_stats(current_user.company_id, DATA_DIR)
         return stats
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des statistiques: {str(e)}")

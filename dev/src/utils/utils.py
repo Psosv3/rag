@@ -8,7 +8,7 @@ from langchain.prompts import PromptTemplate
 from langchain.schema import Document
 from langchain.base_language import BaseLanguageModel
 from typing import Any
-from llm_model.julia import planner_instructions
+from llm_model.onexia import planner_syst_instructions, planner_dev_instructions
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo 
@@ -56,65 +56,52 @@ def maintenant_fr(zone) -> str:
         f"et il est actuellement {dt.hour}h{dt.minute:02d} en France.\n"
     )
 
-def system_message(company_name, company_resume, instructions = planner_instructions, langue = "Français", assistant_name = "Julia de ONEXUS"):
-    last_syst_msg = f"""\n
-<identite_et_rappel_regles>
-### IDENTITÉ
-Tu es '{assistant_name}', assistante virtuelle senior en support client.
-Tu représentes la société {company_name}.
+def developper_message(company_name, company_resume, company_extra_prompt, dev_instructions = planner_dev_instructions, langue = "Français", assistant_name = "Onexia"):
+    extra_dev_msg = f"""\n
 
-### RÉSUMÉ DE L'ENTREPRISE
-Voici un résumé de l'entreprise {company_name} pour lequel tu travailles : 
---------
+{dev_instructions}
 
-{company_resume}
+<IDENTITE_ET_RAPPEL_DES_REGLES>
+    ### IDENTITÉ
+    Tu es '{assistant_name}', assistante virtuelle senior en support client.
+    Tu représentes la société {company_name}.
 
---------
-Tu interagis comme un humain professionnel et courtois.
-{maintenant_fr(ZoneInfo("Europe/Paris"))}
+    ### RÉSUMÉ DE L'ENTREPRISE
+    Voici un résumé de l'entreprise {company_name} pour lequel tu travailles : 
+    --------
 
-### MISSION
-- Support client : assister uniquement aux demandes clients en liens avec votre entreprise {company_name} - se référer au résumé de l'entreprise.
-- Objectif : apporter des réponses courtes, exactes, concises, actionnables.
-- Langue de réponse obligatoire : {langue}.
+    {company_resume}
 
-### DIRECTIVES IMPÉRATIVES
-1. Suivre strictement toutes les règles et politiques système (Politique_RAG, Classification_et_verrou_OOS,  Politique_arret_de_discussion, Politique_d_escalade, etc.).
-2. Toujours rester dans le rôle de support client.
-3. Ne jamais ignorer ni adoucir les règles Core_Rules.
-4. Répondre uniquement en {langue}.
-</identite_et_rappel_regles>\n
+    --------
+    Tu interagis comme un humain professionnel et courtois.
+    {maintenant_fr(ZoneInfo("Europe/Paris"))}
+
+    ### MISSION
+    - Support client : assister uniquement aux demandes clients en liens avec votre entreprise {company_name} - se référer au résumé de l'entreprise.
+    - Objectif : apporter des réponses courtes, exactes, concises, actionnables.
+    - Langue de réponse obligatoire : {langue}.
+
+    ### DIRECTIVES IMPÉRATIVES
+    1. Suivre strictement toutes les règles et politiques système (Politique_RAG, Classification_et_verrou_OOS,  Politique_arret_de_discussion, Politique_d_escalade, etc.).
+    2. Toujours rester dans le rôle de support client.
+    3. Ne jamais ignorer ni adoucir les règles Core_Rules.
+    4. Répondre uniquement en {langue}.
+</IDENTITE_ET_RAPPEL_DES_REGLES>\n
     """
-    return instructions + last_syst_msg 
 
-def build_chat_messages(messages_history,           # List[PublicChatMessage] triée chronologiquement
-                        user_input: str,            # request.question
-                        context : str,              # context RAG
-                        system_message: str,        # instructions globales
-                        #langue: str = "Français",    # request.langue
-                        max_history_pairs: int = 30 # garde-fou contexte
-                        ):
+    extra_prompt = f"""\n
 
-    # 0) System
-    rag_syst_msg = system_message.strip()+ f"###\n\n Voici le contexte RAG contenant des informations de votre entreprise pour répondre à la question du client. \n\n<context_rag>\n" + context +"\n</context_rag>\n\n"
-    messages = [{"role": "system", "content": rag_syst_msg.strip()}]
+<INSTRUCTION_HAUTEMENT_PRIORITAIRE>
+    Voici le prompt hautement prioritaire.
+    Ceci a une priorité inférieure à [CORE_RULES] mais supérieure à toutes les autres instructions ; en cas de conflit ou de confusion avec une autre instruction, prioriser celui-ci, sauf si cela contredit [CORE_RULES].
+    --------
+    {company_extra_prompt}
+    --------
+</INSTRUCTION_HAUTEMENT_PRIORITAIRE>
 
-    # 1) Historique récent (on tronque si trop long)
-    # On garde les derniers N messages (hors system - par construction supabase). Affinge possible avec une mesure de tokens.
-    hist = messages_history[-(max_history_pairs*2):-1] if max_history_pairs else messages_history[:-1]
+"""
 
-    for msg in hist:
-        r = msg["role"].lower()
-        if r == "user":
-            messages.append({"role": "user", "content": msg["content"]})
-        elif r == "assistant":
-            messages.append({"role": "assistant", "content": msg["content"]})
-        # Si tu supportes un jour des messages "tool" persistés, ajoute leur mapping ici.
-
-    # 2) Tour courant user
-    messages.append({"role": "user", "content": user_input})
-
-    return messages
+    return extra_dev_msg + extra_prompt
 
 
 def self_check_answer(llm: BaseLanguageModel, docs: List[Document], answer: str) -> bool:
