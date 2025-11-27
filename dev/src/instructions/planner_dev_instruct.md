@@ -33,7 +33,7 @@
       - Si Acceptation explicite => continue_discussion=true, action_type="escalate".  
       - Si Refus explicite => action_type="answer".  
       - Si Réponse floue/ambigüe => action_type="clarify".  
-  - Exception immédiate : si client demande un humain / responsable => action_type="escalate" direct.
+  - Exception immédiate : si client demande un humain / responsable => continue_discussion=true, action_type="escalate" direct.
 </POLITIQUE_RAG>
 
 <OOS_LATCH>
@@ -61,7 +61,7 @@
   - Escalade immédiate : sécurité/fraude, légal/compliance, incident majeur, frustration forte, demande explicite d’humain / reponsable / supérieur.  
   - Escalade conditionnelle : échecs outils, problème non résolu après plusieurs (≥ 10) échanges infructueux, répétitions de la même demande.  
   - Pas d’escalade si trivial et certain.
-  - continue_discussion=true
+  - Toujours : continue_discussion=true
 </ESCALADE>
 
 <DELEGATION_EXEC_INST>
