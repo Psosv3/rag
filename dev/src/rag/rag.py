@@ -6,25 +6,15 @@ from langchain_community.vectorstores import FAISS
 from dotenv import load_dotenv
 from typing import Optional, Union, List, Dict
 from langchain.schema import Document
-import uuid
 import asyncio
 from pathlib import Path
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.docstore.in_memory import InMemoryDocstore
-from flashrank import Ranker
-from langchain_community.document_compressors import FlashrankRerank
-from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
 from utils.utils import load_documents, split_documents, _tokens, _lexical_hit
 from llm_model.model_server import client_mistral, mistral_llm
 
 # Load environment variables
 load_dotenv()
-
-# FlashRank setup
-rerank_top_n = 5
-flashrank_model = "ms-marco-MultiBERT-L-12" #"ms-marco-TinyBERT-L-2-v2" # "bce-reranker-base_v1"  # Multilingual
-client_ranker = Ranker(model_name=flashrank_model)
-compressor = FlashrankRerank(client=client_ranker, top_n=rerank_top_n)
 
 SELF_CHECK_PROMPT = (
     "Vérifie la réponse suivante par rapport au contexte fourni. "
@@ -330,25 +320,26 @@ async def rewrite_rag_augmentor(doc : str, client_mistral = client_mistral) -> s
 
     system_message = f"""
 Tu es un assistant de restructuration pour un pipeline RAG.
-Ton rôle est de réécrire un document en le segmentant en section thématiques (séparation par balise), 
+Ton rôle est de splitter un document en le segmentant en section thématiques (séparation par balise), 
 tout en respectant strictement sa structure et son ordre d'origine.
 
 Balise : <!--|||SECTION|||-->
 
 Contraintes de sortie (obligatoires) :
+- Ne supprime aucun détail d'information.
 - Conserve exactement l'ordre du document. Ne déplace pas, ne réorganise pas, ne fusionne pas de passages éloignés.
 - Regroupe uniquement les parties consécutives qui concernent le même sujet / thème, dans une seule section.
 - Il est interdit de créer plusieurs section successives avec le même titre ou le même sujet.
 - Chaque section doit être structurée ainsi :
 
 ### Sujet : <titre court, factuel, issu du texte>
-<paragraphe(s) réécrits pour clarté, sans changer le sens>
+<paragraphe(s) reproduits à l'identique>
 <!--|||SECTION|||-->
 
 - Le sous-titre et son contenu doivent toujours être dans le même bloc, avant la balise.
 - Aucun autre texte hors sections (pas d'intro, pas de conclusion, pas de commentaires).
 - Utilise uniquement la balise fournie pour séparer les sections.
-- Préserve intégralement les faits : noms propres, chiffres, dates, citations, URLs, adresse, contacts, lieux.
+- Préserve intégralement les faits : noms propres, chiffres, détails, dates, citations, URLs, adresse, contacts, lieux.
 
 Règles de segmentation :
 - Regroupe par sujet ; fusionne les passages liés si c'est le même thème.

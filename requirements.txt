@@ -1,9 +1,5 @@
 numpy
 uvicorn
-langchain
-langchain-community
-langchain-openai
-langchain-mistralai
 faiss-cpu
 PyPDF2
 python-docx
@@ -38,3 +34,12 @@ openai-agents
 openai
 google-cloud-translate
 reportlab
+langchain<0.2
+langchain-community
+langchain-openai
+langchain-mistralai
+
+
+# dev environment: 
+langfuse 
+openinference-instrumentation-groq

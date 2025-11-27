@@ -24,12 +24,13 @@ from redis.exceptions import RedisError
 from supabase import AsyncClient
 import jwt
 # Models
-from llm_model.julia import julia_executor, julia_escalator
+from llm_model.onexia import onexia_executor, onexia_escalator
 # Rag
 from rag.rag import rewrite_rag_augmentor
 # Utils
 from utils.utils import read_pdf, read_docx, save_to_pdf, save_to_docx, extract_emails, extract_intern_emails, check_difference, strip_emails, maintenant_fr, ZoneInfo
-
+# security encrypt/decrypt message
+from security.security import encrypt, decrypt
 
 ###################################################### Class definitions ######################################################
 load_dotenv()
@@ -73,6 +74,7 @@ class FeedbackRequest(BaseModel):
 TABLE_SESSION = "public_chat_sessions"
 TABLE_MESSAGE = "public_chat_messages"
 TABLE_COMPANY = "companies"
+TABLE_COMPANY_INTEGRATIONS = "company_integrations"
 TABLE_CONTACTS = "contacts"
 TABLE_USER_PROFILES = "user_profiles"
 TOOL_SEND_EMAIL= "smtp_email_sender"
@@ -156,7 +158,7 @@ async def get_current_user(request: Request, credentials: HTTPAuthorizationCrede
 
     return current_user
 
-###################################################### Supabase ######################################################
+###################################################### Supabase #######################################################
 async def get_supabase(request: Request) -> AsyncClient:
     spbase: AsyncClient = request.app.state.spbase  # type: ignore[attr-defined]
     return spbase
@@ -256,7 +258,7 @@ async def get_or_create_session(spbase : AsyncClient, redis: Redis, company_id: 
 async def save_supabase_message(spbase: AsyncClient, session_id: str, role: str, content: str, manual_response: bool=False) -> dict:
     message_id = str(uuid.uuid4())
     res = await spbase.table(TABLE_MESSAGE)\
-        .insert({"message_id": message_id, "session_id": session_id, "role": role, "content": content})\
+        .insert({"message_id": message_id, "session_id": session_id, "role": role, "content": encrypt(content)})\
         .execute()
     
     if manual_response:
@@ -273,20 +275,81 @@ async def save_supabase_message(spbase: AsyncClient, session_id: str, role: str,
     result["message_id"] = message_id  # S'assurer que le message_id est retourné
     return result
 
+async def create_notification(
+    spbase: AsyncClient,
+    company_id: str,
+    notification_type: str,
+    title: str,
+    content: str,
+    session_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    priority: str = "normal",
+    metadata: Optional[Dict[str, Any]] = None,
+    action_url: Optional[str] = None,
+    action_label: Optional[str] = None
+) -> dict:
+    """
+    Fonction flexible pour créer n'importe quel type de notification
+    
+    Args:
+        spbase: Client Supabase
+        company_id: ID de l'entreprise
+        notification_type: Type de notification (ex: 'manual_response_required', 'negative_feedback')
+        title: Titre court
+        content: Description détaillée
+        session_id: ID de session (optionnel)
+        message_id: ID de message (optionnel)
+        priority: Priorité ('low', 'normal', 'high', 'urgent')
+        metadata: Données supplémentaires en JSON
+        action_url: URL d'action (optionnel)
+        action_label: Label du bouton d'action (optionnel)
+    """
+    notification_data = {
+        "company_id": company_id,
+        "type": notification_type,
+        "title": title,
+        "content": content,
+        "priority": priority,
+        "read": False,
+        "created_at": datetime.now().isoformat()
+    }
+    
+    # Ajouter les champs optionnels seulement s'ils sont fournis
+    if session_id:
+        notification_data["session_id"] = session_id
+    if message_id:
+        notification_data["message_id"] = message_id
+    if metadata:
+        notification_data["metadata"] = metadata
+    if action_url:
+        notification_data["action_url"] = action_url
+    if action_label:
+        notification_data["action_label"] = action_label
+    
+    try:
+        res = await spbase.table("notifications").insert(notification_data).execute()
+        result = first_row(res)
+        if isinstance(result, list) and result:
+            return result[0]
+        return result if result else {}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Erreur lors de la création de la notification: {str(e)}")
+
+
 async def get_or_write_company_resume(spbase: AsyncClient, company_id: str, action: str, resume_text: Optional[str] = None) :
     if action == "get":
-        res = await spbase.table(TABLE_COMPANY)\
+        res = await spbase.table(TABLE_COMPANY_INTEGRATIONS)\
             .select("company_resume")\
-            .eq("id", company_id)\
+            .eq("company_id", company_id)\
             .execute()
         data = res.data or []
         return data[0].get("company_resume") if data else None
     
     elif action == "write":
         if resume_text:
-            await spbase.table(TABLE_COMPANY)\
+            await spbase.table(TABLE_COMPANY_INTEGRATIONS)\
                 .update({"company_resume": resume_text})\
-                .eq("id", company_id)\
+                .eq("company_id", company_id)\
                 .execute()
         return None
     
@@ -300,7 +363,10 @@ async def list_messages(spbase: AsyncClient, session_id: str, limit: int = 200) 
         .order("created_at", desc=False)\
         .limit(limit)\
         .execute()
-    return res.data or []
+    rows = res.data or []
+    rows = [
+        {**row, "content": decrypt(row.get("content"))}for row in rows]
+    return rows
 
 
 async def messenger_wait_human(sp: AsyncClient, session_id: str) ->  bool:
@@ -313,6 +379,50 @@ async def messenger_wait_human(sp: AsyncClient, session_id: str) ->  bool:
     if data and data[0].get("manual_response") == True and data[0].get("messenger") == True:
         return True
     return False
+
+async def stop_chatbot(sp: AsyncClient, company_id: str) ->  bool:
+    """ Retrieve the chatbot status of the company """
+    res = await sp.table(TABLE_COMPANY_INTEGRATIONS) \
+                  .select("general_manual_response") \
+                  .eq("company_id", company_id) \
+                  .execute()
+    data = res.data or []
+    if data and data[0].get("general_manual_response") == True:
+        return True
+    return False
+
+def build_chat_messages(messages_history,           # List[PublicChatMessage] triée chronologiquement
+                        user_input: str,            # request.question
+                        context : str,              # context RAG
+                        system_message: str,        # instructions globales
+                        dev_message: str,           # developper messsage
+                        max_history_pairs: int = 100 # garde-fou contexte
+                        ):
+
+    # 0) a) System
+    messages = [{"role": "system", "content": system_message.strip()}]
+    # 0) b) Developper
+    _dev_message = dev_message.strip()+ f"###\n\n Voici le contexte RAG contenant des informations de votre entreprise pour répondre à la question du client. \n\n<CONTEXT_RAG>\n" + context +"\n</CONTEXT_RAG>\n\n"
+    
+    messages.append({"role": "developer", "content": _dev_message})
+
+    # 1) Historique récent (on tronque si trop long)
+    # On garde les derniers N messages (hors system - par construction supabase). Affinge possible avec une mesure de tokens.
+    hist = messages_history[-(max_history_pairs*2):-1] if max_history_pairs else messages_history[:-1]
+
+    for msg in hist:
+        r = msg["role"].lower()
+        if r == "user":
+            messages.append({"role": "user", "content": msg["content"]})
+        elif r == "assistant":
+            messages.append({"role": "assistant", "content": msg["content"]})
+        # Si tu supportes un jour des messages "tool" persistés, ajoute leur mapping ici.
+
+    # 2) Tour courant user
+    messages.append({"role": "user", "content": user_input})
+
+    return messages
+
 
 ###################################################### Conversation utils & redis ######################################################
 
@@ -406,43 +516,87 @@ async def refresh_companies_into_state(app: FastAPI) -> None:
         return
 
     try:
-        res = await spbase.table(TABLE_COMPANY).select("id, name, company_resume").execute()
+        res = await spbase.table(TABLE_COMPANY_INTEGRATIONS).select("company_id, companies(name), company_resume, chatbot_signature, extra_prompt").execute()
         rows = res.data or []
 
-        companies = {r["id"]: str(r["name"]) for r in rows if r and r.get("id") and r.get("name")}
-        company_resumes = {r["id"]: str(r["company_resume"]) for r in rows if r and r.get("id") and r.get("company_resume")}
+        companies = {r["company_id"]: str(r["companies"]["name"]) for r in rows if r and r.get("company_id") and r.get("companies") and r["companies"].get("name")}
+        company_resumes = {r["company_id"]: str(r["company_resume"]) for r in rows if r and r.get("company_id") and r.get("company_resume")}
+        company_signatures = {r["company_id"]: str(r["chatbot_signature"]) for r in rows if r and r.get("company_id") and r.get("chatbot_signature")}
+        company_extra_prompt = {r["company_id"]: str(r["extra_prompt"]) for r in rows if r and r.get("company_id") and r.get("extra_prompt")}
 
         # État en mémoire
         app.state.companies = companies
         app.state.company_resumes = company_resumes
+        app.state.company_signatures = company_signatures
+        app.state.company_extra_prompt = company_extra_prompt
 
         # Redis: delete puis (re)write, en 1 pipeline
         pipe = redis_client.pipeline()
-        pipe.delete("companies", "company_resumes")
+        pipe.delete("companies", "company_resumes", "company_signatures", "company_extra_prompt")
         if companies:
             pipe.hset("companies", mapping=companies)
         if company_resumes:
             pipe.hset("company_resumes", mapping=company_resumes)
+        if company_signatures:
+            pipe.hset("company_signatures", mapping=company_signatures)
+        if company_extra_prompt:
+            pipe.hset("company_extra_prompt", mapping=company_extra_prompt)
         await pipe.execute()
     except Exception as e:
+        print(e)
         return 
 
-async def get_company_name_resume(app: FastAPI, company_id: str) -> tuple[str, Optional[str]]:
+async def get_company_name_resume_prompt_signature(app: FastAPI, company_id: str) -> tuple[str, Optional[str]]:
     companies = getattr(app.state, "companies", {})
     resumes = getattr(app.state, "company_resumes", {})
+    extra_prompts = getattr(app.state, "company_extra_prompt", {})
+    signatures = getattr(app.state, "company_signatures", {})
     name = companies.get(company_id)
     resume = resumes.get(company_id)
+    extra_prompt = extra_prompts.get(company_id)
+    signature = signatures.get(company_id)
     if name is None:
         name = await redis_client.hget("companies", company_id) or "votre entreprise"
     if resume is None:
         resume = await redis_client.hget("company_resumes", company_id)
-    return name, resume
+    if extra_prompt is None:
+        extra_prompt = await redis_client.hget("company_extra_prompt", company_id)
+    if signature is None:
+        signature = await redis_client.hget("company_signatures", company_id)
+    return name, resume, extra_prompt, signature
 
 async def get_company_resume(app: FastAPI, company_id: str) -> str:
     if hasattr(app.state, "company_resumes") and company_id in app.state.company_resumes:
         return app.state.company_resumes[company_id]
     name = await redis_client.hget("companies", company_id)
     return name or "votre entreprise"
+
+async def get_company_chatbot_signature(spbase: AsyncClient, company_id: str) -> Optional[str]:
+    """
+    Récupère la signature du chatbot pour une entreprise donnée.
+    Essaie d'abord depuis le cache Redis, puis depuis Supabase.
+    """
+    # Essayer depuis Redis
+    signature = await redis_client.hget("company_signatures", company_id)
+    if signature:
+        return signature
+    
+    # Si pas dans Redis, récupérer depuis Supabase
+    try:
+        res = await spbase.table(TABLE_COMPANY_INTEGRATIONS)\
+            .select("chatbot_signature")\
+            .eq("company_id", company_id)\
+            .execute()
+        data = res.data or []
+        if data and data[0].get("chatbot_signature"):
+            signature = data[0]["chatbot_signature"]
+            # Mettre en cache dans Redis
+            await redis_client.hset("company_signatures", company_id, signature)
+            return signature
+    except Exception as e:
+        pass
+    
+    return None
 
 
 ###################################################### Upload helpers ######################################################
@@ -491,15 +645,22 @@ async def run_executor_agent(supabase,
             denied_answer = f"Je suis désolé, je me rends compte que je ne suis pas autorisé à envoyer l'email au destinataire : {', '.join(intru for intru in list_intrus)}."
             await save_supabase_message(supabase, session_id, "assistant", denied_answer)
             return denied_answer
-
-    out = await julia_executor(exec_instruct)
+    print(f"\n[DEBUG] Executor instructions débutées dans app_utils.py: \n{exec_instruct}\n")
+    out = await onexia_executor(exec_instruct)
+    print(f"\n[DEBUG] Executor instructions terminées dans app_utils.py: \n{out}\n")
     try :
-        out = json.loads(out) 
+        try:
+            out = json.loads(out) 
+        except:
+            pass
+        print(f"\n[DEBUG] json.load( )  utilisé: \n{type(out)}\n")
         return_reponse = out['message'] + out['ask'] if  out['ask'].lower() not in ["null", "none",""] else out['message']
+        print(f"\n[DEBUG] return_reponse dans app_utils.py: \n{return_reponse}\n")
         if session_id:
             await save_supabase_message(supabase, session_id, "assistant", return_reponse)
         return return_reponse
     except Exception as e:
+        print(f"\n[DEBUG] Exception dans app_utils.py: \n{e}\n")
         return "Je suis désolé, j'ai subi une petite déconnexion. Pourriez-vous répéter svp ?"
 
 
@@ -549,7 +710,7 @@ Choisissez la meilleure personne en fonction de son poste et de sa description :
 """
 
     input_escalate = escalate_msg_inst + list_contact_msg
-    await julia_escalator(input_escalate)
+    await onexia_escalator(input_escalate)
     return
 
 
@@ -569,6 +730,7 @@ async def load_intern_contact(sp: AsyncClient, company_id: str) -> List[Dict[str
     return res.data or []
 
 async def safe_write_augmented_file(file: UploadFile, destination: Path):
+
     ext = Path(file.filename).suffix.lower()
     content = await file.read()  # read entire file into memory
 
@@ -581,8 +743,11 @@ async def safe_write_augmented_file(file: UploadFile, destination: Path):
 
     if not original_text.strip():
         raise HTTPException(status_code=422, detail="File empty or unreadable")
-
-    augmented_text = await rewrite_rag_augmentor(original_text)
+    
+    try:
+        augmented_text = await rewrite_rag_augmentor(original_text)
+    except :
+        augmented_text = original_text
 
     if ext == ".pdf":
         save_to_pdf(augmented_text, destination)

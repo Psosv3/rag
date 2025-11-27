@@ -45,3 +45,34 @@ def close_and_require_all(schema: dict) -> dict:
                 walk(node["items"], f"{path}/items")
     walk(schema)
     return schema
+
+async def chat_completion_function(user_message, api_client, llm_model, output_schema) -> str:
+    chat_completion = await api_client.chat.completions.create(
+            model=llm_model,
+            messages=user_message,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "PlannerOutput",
+                    "schema": output_schema,
+                    "strict": True
+                    }
+                },
+            temperature=0.05,
+            top_p=0.95,
+            seed = 127,
+            stream=False,
+        )
+    content = chat_completion.choices[0].message.content.strip() or "{}"
+    return content
+
+def fallback_completion():
+    return PlannerOutput(
+                action_type="answer",
+                tools_to_call=[],
+                continue_discussion=True,
+                citations_required=False,
+                exec_required=False,
+                exec_inst="",
+                user_visible_answer="Désolé, il semble que j'ai perdu ma connexion. Pourriez-vous répéter svp ?"
+            )

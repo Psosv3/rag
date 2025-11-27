@@ -9,6 +9,7 @@ import contextlib
 from pathlib import Path
 from typing import Optional, List, AsyncGenerator, Annotated
 from contextlib import asynccontextmanager
+from datetime import datetime
 import asyncio
 from dotenv import load_dotenv
 # FastAPI
@@ -23,7 +24,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from redis.asyncio import Redis, ConnectionPool
 from supabase import create_async_client, AsyncClient
 # Utilities
-from utils.utils import system_message, safety_post_filter, build_chat_messages, controlled_fallback_response, sanitize_translate, translate, check_contact_and_name, dict_abreviation_mg
+from utils.utils import developper_message, safety_post_filter, controlled_fallback_response, sanitize_translate, translate, check_contact_and_name, dict_abreviation_mg
 from .app_utils import (
     # Constant
     TABLE_SESSION,
@@ -48,9 +49,10 @@ from .app_utils import (
     get_or_create_session,
     is_banned,
     save_supabase_message,
+    create_notification,
     get_cached_rag_docs,
     cache_rag_docs,
-    get_company_name_resume,
+    get_company_name_resume_prompt_signature,
     list_messages,
     forbiden_session,
     log_audit,
@@ -66,10 +68,13 @@ from .app_utils import (
     messenger_wait_human,
     prep_input_embed,
     get_or_write_company_resume,
+    get_company_chatbot_signature,
+    build_chat_messages,
+    stop_chatbot,
     )
 # rag & models
 from rag.rag import get_rag_context, rebuild_company_index, build_index, get_company_data_dir, get_company_stats, clear_company_cache
-from llm_model.julia import julia_planner, julia_executor, PlannerOutput
+from llm_model.onexia import onexia_planner, onexia_executor, PlannerOutput, planner_syst_instructions
 
 load_dotenv()
 
@@ -85,7 +90,7 @@ VECTORSTORES_CACHE = {}
 
 
 ###################################################### FastAPI app + lifespan ######################################################
-app = FastAPI(title="Julia_Onexus", description="API RAG multitenant (Supabase Data API + Redis + JWT)")
+app = FastAPI(title="Onexia", description="API RAG multitenant (Supabase Data API + Redis + JWT)")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -93,6 +98,8 @@ async def lifespan(app: FastAPI):
     app.state.spbase = spbase
     app.state.companies = {}
     app.state.company_resumes = {}
+    app.state.company_signatures = {}
+    app.state.company_extra_prompt = {}
     await refresh_companies_into_state(app)
     try:
         yield
@@ -126,12 +133,14 @@ async def upload_file(file: UploadFile = File(...),
                       current_user: AuthUser = Depends(get_current_user),
                       augment_rag : bool = True):
     """Endpoint pour uploader un fichier PDF ou DOCX pour l'entreprise de l'utilisateur."""
-
     ext = Path(file.filename).suffix.lower()
+
     if ext not in settings.ALLOWED_UPLOAD_EXTS:
         raise HTTPException(status_code=400, detail="Seuls les fichiers PDF et DOCX sont acceptés.")
+    
     mime_guess, _ = mimetypes.guess_type(file.filename)
     mime_hint = (mime_guess or file.content_type or "").lower()
+
     if ext == ".pdf" and "pdf" not in mime_hint: # Make sure the extension and MIME type agree
         raise HTTPException(status_code=400, detail="MIME type mismatch for PDF")
     if ext == ".docx" and ("word" not in mime_hint and "officedocument" not in mime_hint):
@@ -179,6 +188,7 @@ async def express_build_index(current_user: AuthUser = Depends(get_current_user)
 @app.post("/ask_public/")
 async def ask_question_public(req: Request,
                               request: PublicQuestionRequest,
+                              #file: Optional[UploadFile] = File(None),
                               spbase: AsyncClient = Depends(get_supabase),
                               redis: Redis = Depends(get_redis),
                               ):
@@ -205,11 +215,12 @@ async def ask_question_public(req: Request,
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
 
-            # 0) Ban check or Messenger_waiting_human
+            # 0) General_Stop chatbot check or Ban check or Messenger_waiting_human
+            general_manual_response = await stop_chatbot(spbase, request.company_id)
             ban = await is_banned(redis, request.company_id, session_id)
             messenger_waiting_human = await messenger_wait_human(spbase, session_id)
 
-            if ban or messenger_waiting_human:
+            if general_manual_response or ban or messenger_waiting_human:
                 yield sse_data({
                     "answer": None,
                     "company_id": request.company_id,
@@ -220,7 +231,7 @@ async def ask_question_public(req: Request,
             
             # 1) Persist user message & load conv history
             await save_supabase_message(spbase, session_id, "user", user_question)
-            conv_history = await list_messages(spbase, session_id, limit=60)
+            conv_history = await list_messages(spbase, session_id)
 
             # 1) Prioritize escalate-ready case
             if await is_ready_to_escalate(redis, request.company_id, session_id):
@@ -229,6 +240,24 @@ async def ask_question_public(req: Request,
                     await remove_escalate_session(redis, request.company_id, session_id)
 
                     await escalate_to_humans(conv_history, spbase, session_id, request)
+
+                    # Créer une notification pour le dashboard
+                    await create_notification(
+                        spbase=spbase,
+                        company_id=request.company_id,
+                        notification_type="manual_response_required",
+                        title="Intervention manuelle requise",
+                        content=f"Une conversation a été escaladée et nécessite une réponse manuelle. Dernier message: {user_question[:100]}...",
+                        session_id=session_id,
+                        priority="high",
+                        metadata={
+                            "reason": "escalation_completed",
+                            "last_user_message": user_question[:200],
+                            "escalation_time": datetime.now().isoformat()
+                        },
+                        action_url=f"/dashboard/chat?session={session_id}",
+                        action_label="Répondre maintenant"
+                    )
 
                     answer_escalate = "C'est bon! Mon responsable a été informé. Il reviendra vers vous au plus vite."
                     message_data = await save_supabase_message(spbase, session_id, "assistant", answer_escalate, manual_response=True)
@@ -268,18 +297,18 @@ async def ask_question_public(req: Request,
                 await cache_rag_docs(redis, request.company_id, input_to_embed, docs, ttl_seconds=300)
                 
             # 3) Build messages for LLM/agents
-            company_name, company_resume = await get_company_name_resume(app, request.company_id)
-            syst_msg = system_message(company_name, company_resume)
+            company_name, company_resume, company_extra_prompt, company_signature = await get_company_name_resume_prompt_signature(app, request.company_id)
+            syst_msg = planner_syst_instructions
+            dev_msg = developper_message(company_name, company_resume, company_extra_prompt)
             msgs = build_chat_messages(
                 messages_history=conv_history,
                 user_input=user_question,
                 context=docs,
                 system_message=syst_msg,
-                max_history_pairs=30,
+                dev_message=dev_msg,
             )
-
             # 4) Planner
-            planner_out: PlannerOutput = await julia_planner(msgs)
+            planner_out: PlannerOutput = await onexia_planner(msgs)
 
             if not planner_out.continue_discussion:
                 await forbiden_session(redis, request.company_id, session_id)
@@ -298,7 +327,8 @@ async def ask_question_public(req: Request,
                 return
 
             # 5) Simple branches
-            async def respond_and_log(text: str, langue : str) -> dict: # Helper to log assistant text
+            async def respond_and_log(text: str, langue : str, signature: str) -> dict: # Helper to log assistant text + add final signature
+                text += f"\n\n{signature}" if signature else ""
                 safe_answer = safety_post_filter(text)
                 message_data = await save_supabase_message(spbase, session_id, "assistant", safe_answer)
                 if langue.lower() in ("malgache", "malagasy","mg"):
@@ -309,12 +339,13 @@ async def ask_question_public(req: Request,
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
-                    "message_id": message_data.get("message_id")
+                    "message_id": message_data.get("message_id"),
+                    "signature": signature
                     }
 
             if planner_out.action_type == "reject":
                 reject = planner_out.user_visible_answer or "Désolé, je ne suis pas en mesure de vous aider sur ce point."
-                yield sse_data(await respond_and_log(reject, request.langue))
+                yield sse_data(await respond_and_log(reject, request.langue, company_signature))
                 return
             
             if planner_out.action_type == "clarify":
@@ -322,15 +353,15 @@ async def ask_question_public(req: Request,
                     "D'accord. Mais je ne suis pas sûr de clairement comprendre votre demande. "
                     "Pouvez-vous détailler encore un peu plus svp ?"
                 )
-                yield sse_data(await respond_and_log(clarif, request.langue))
+                yield sse_data(await respond_and_log(clarif, request.langue, company_signature))
                 return
             
             if planner_out.action_type == "answer":
                 if not planner_out.user_visible_answer:
                     clarif_bis = "Pouvez-vous me fournir un peu plus de détail svp ?"
-                    yield sse_data(await respond_and_log(clarif_bis, request.langue))
+                    yield sse_data(await respond_and_log(clarif_bis, request.langue, company_signature))
                     return
-                yield sse_data(await respond_and_log(planner_out.user_visible_answer, request.langue))
+                yield sse_data(await respond_and_log(planner_out.user_visible_answer, request.langue, company_signature))
                 return
 
             if planner_out.action_type == "escalate":
@@ -406,12 +437,12 @@ async def ask_question_public(req: Request,
 
             # 7) Fallback
             lang = "Français"
-            yield sse_data(await respond_and_log(controlled_fallback_response(lang, request.langue), request.langue))
+            yield sse_data(await respond_and_log(controlled_fallback_response(lang, request.langue), request.langue, company_signature))
             return
 
         except Exception as e:
             await log_audit(redis, {"type": "error", "at": "ask_public", "error": str(e)})
-            yield sse_data({"error": f"Erreur lors de la génération de la réponse: {str(e)}"})
+            raise HTTPException(status_code=500, detail=f"Erreur lors de la génération de la réponse: {str(e)}")
 
     # 3) Single-generator SSE with heartbeat on timeout
     async def merged_stream():
@@ -464,10 +495,41 @@ async def get_public_messages(session_id: str, spbase: AsyncClient = Depends(get
     msgs = await list_messages(spbase, session_id)
     return msgs
 
+@app.get("/company_info_public/{company_id}")
+async def get_company_info_public(company_id: str, spbase: AsyncClient = Depends(get_supabase)):
+    """
+    Endpoint public pour récupérer les informations d'une entreprise (notamment chatbot_signature et background_color).
+    """
+    try:
+        signature = await get_company_chatbot_signature(spbase, company_id)
+        
+        # Récupérer le background_color depuis company_integrations
+        background_color = "#4F46E5"  # Valeur par défaut
+        try:
+            integration_res = await spbase.table("company_integrations")\
+                .select("background_color")\
+                .eq("company_id", company_id)\
+                .limit(1)\
+                .execute()
+            
+            if integration_res.data and len(integration_res.data) > 0:
+                background_color = integration_res.data[0].get("background_color", background_color)
+        except Exception as e:
+            # Si erreur lors de la récupération, on utilise la couleur par défaut
+            pass
+        
+        return {
+            "company_id": company_id,
+            "chatbot_signature": signature,
+            "background_color": background_color,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des informations: {str(e)}")
+
 @app.get("/stats/")
 async def get_stats_endpoint(current_user: AuthUser = Depends(get_current_user)):
     try:
-        stats = get_company_stats(current_user.company_id or "default-company", DATA_DIR)
+        stats = get_company_stats(current_user.company_id, DATA_DIR)
         return stats
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des statistiques: {str(e)}")
@@ -485,13 +547,6 @@ async def get_document_content(
         company_data_dir = get_company_data_dir(company_id, DATA_DIR)
         file_path = os.path.join(company_data_dir, filename)
         
-        print(f"[DEBUG] Tentative de lecture du fichier:")
-        print(f"  - filename: {filename}")
-        print(f"  - company_id: {company_id}")
-        print(f"  - company_data_dir: {company_data_dir}")
-        print(f"  - file_path: {file_path}")
-        print(f"  - exists: {os.path.exists(file_path)}")
-
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail=f"Fichier {filename} non trouvé dans {company_data_dir}")
 
@@ -499,14 +554,12 @@ async def get_document_content(
             raise HTTPException(status_code=400, detail="Seuls les fichiers DOCX peuvent être lus pour édition")
 
         # Lire le contenu du fichier DOCX
-        print(f"[DEBUG] Lecture du document DOCX...")
         doc = Document(file_path)
         paragraphs = []
         for para in doc.paragraphs:
             paragraphs.append(para.text)
         
         content = "\n".join(paragraphs)
-        print(f"[DEBUG] Document lu avec succès. Longueur: {len(content)} caractères")
         
         return {
             "filename": filename,
@@ -621,11 +674,6 @@ async def download_document(
         company_data_dir = get_company_data_dir(company_id, DATA_DIR)
         file_path = os.path.join(company_data_dir, filename)
 
-        print(f"[DEBUG] Téléchargement du fichier:")
-        print(f"  - filename: {filename}")
-        print(f"  - file_path: {file_path}")
-        print(f"  - exists: {os.path.exists(file_path)}")
-
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail=f"Fichier {filename} non trouvé")
 
@@ -690,8 +738,7 @@ async def delete_document(
             "company_id": company_id,
             "filename": filename,
         }
-    except HTTPException:
-        raise
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la suppression du document: {str(e)}")
 
@@ -771,10 +818,48 @@ async def submit_feedback(
                 detail="Message non trouvé ou non éligible au feedback"
             )
         
-        # Log pour analytics
-        # await log_audit(
-        #     f"Feedback {request.feedback} sur message {request.message_id} de la session {request.session_id}"
-        # )
+        # Créer une notification pour les feedbacks négatifs
+        if request.feedback == 'dislike':
+            # Compter le nombre de feedbacks négatifs dans cette session
+            negative_feedback_count = await spbase.table('public_chat_messages')\
+                .select('id', count='exact')\
+                .eq('session_id', request.session_id)\
+                .eq('user_feedback', 'dislike')\
+                .execute()
+            
+            count = negative_feedback_count.count if negative_feedback_count.count else 1
+            
+            # Déterminer la priorité selon le nombre de feedbacks négatifs
+            if count >= 3:
+                priority = "urgent"
+                title = f"⚠️ {count} feedbacks négatifs"
+                content = f"Attention ! Cette conversation a reçu {count} feedbacks négatifs. Une intervention est recommandée."
+            elif count >= 2:
+                priority = "high"
+                title = f"{count} feedbacks négatifs"
+                content = f"Cette conversation a reçu {count} feedbacks négatifs."
+            else:
+                priority = "normal"
+                title = "Feedback négatif reçu"
+                content = "Un utilisateur a donné un feedback négatif sur une réponse."
+            
+            # Créer la notification
+            await create_notification(
+                spbase=spbase,
+                company_id=request.company_id,
+                notification_type="negative_feedback" if count < 3 else "multiple_negative_feedback",
+                title=title,
+                content=content,
+                session_id=request.session_id,
+                message_id=request.message_id,
+                priority=priority,
+                metadata={
+                    "feedback_count": count,
+                    "consecutive_negative": count >= 2
+                },
+                action_url=f"/dashboard/chat?session={request.session_id}",
+                action_label="Analyser la conversation"
+            )
         
         return {
             "success": True,
@@ -793,7 +878,7 @@ async def submit_feedback(
             detail=f"Erreur lors de l'enregistrement du feedback: {str(e)}"
         )
 
-@app.get("/")
+@app.get("/////////")
 async def root():
     return {
         "message": "Bienvenue sur l'API RAG avec multitenancy",

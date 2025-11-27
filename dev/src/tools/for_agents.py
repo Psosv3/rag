@@ -218,3 +218,93 @@ def write_email_draft(recipient_email: str, subject: str, body: str):
 
     return draft
 
+@function_tool
+def json(status: str,
+                         final: str,
+                         message: str,
+                         data: str,
+                         ask: str,
+                         error: str,
+                        ) -> dict:
+    """Génère et valide l'objet de résultat final structuré pour l'agent Exécuteur.
+
+    Cet outil est utilisé comme dernière étape du processus afin de produire un
+    résultat normalisé décrivant ce que l'Exécuteur a fait : son statut, un message
+    lisible, les données structurées éventuelles, ainsi que les questions de suivi
+    ou erreurs si nécessaire.
+
+    Arguments :
+        status (str) :
+            Statut de l'exécution. Doit être l'une des valeurs suivantes :
+            - "completed" : la tâche a été exécutée avec succès.
+            - "need_info" : la tâche n'a pas pu être terminée faute d'informations.
+            - "error" : la tâche a échoué suite à une erreur non récupérable.
+
+        final (str) :
+            Indicateur exprimé en chaîne ("True" ou "False") précisant s'il s'agit
+            d'un résultat final.
+
+        message (str) :
+            Réponse complète, auto-suffisante avec détails de la demande initiale.
+
+        data (str) :
+            Représentation textuelle d'un dictionnaire contenant les données
+            structurées produites pendant l'exécution, ou "None" s'il n'y en a pas.
+
+        ask (str) :
+            Question de suivi à poser si des informations supplémentaires sont
+            nécessaires (uniquement lorsque status == "need_info"), sinon "None".
+
+        error (str) :
+            Description courte de l'erreur si status == "error", sinon "None".
+
+    Retour :
+        str : Un string contenant une forme de dictionnaire avec exactement les clés suivantes :
+            {
+                "status": str,
+                "final": str,
+                "message": str,
+                "data": str,
+                "ask": str,
+                "error": str
+            }
+
+    Exceptions :
+        ValueError : Levée si un argument sort des valeurs autorisées ou si
+        la combinaison fournie n'est pas cohérente (par exemple : status="completed"
+        mais error ≠ "None").
+
+    """
+    if status not in {"completed", "need_info", "error"}:
+        raise ValueError(f"Invalid status value: '{status}'")
+
+    if final not in {"True", "False"}:
+        raise ValueError(f"Invalid final value: '{final}'")
+
+    if status == "completed":
+        if error != "None":
+            raise ValueError("Inconsistent result: status='completed' but error is not 'None'.")
+        if ask != "None":
+            raise ValueError("Inconsistent result: status='completed' but ask is not 'None'.")
+
+    if status == "need_info":
+        if ask == "None":
+            raise ValueError("Inconsistent result: status='need_info' but ask is 'None'.")
+        if error != "None":
+            raise ValueError("Inconsistent result: status='need_info' but error is not 'None'.")
+
+    if status == "error":
+        if error == "None":
+            raise ValueError("Inconsistent result: status='error' but error is 'None'.")
+        if ask != "None":
+            raise ValueError("Inconsistent result: status='error' but ask is not 'None'.")
+
+    return str({
+        "status": status,
+        "final": final,
+        "message": message,
+        "data": data,
+        "ask": ask,
+        "error": error,
+    })
+
