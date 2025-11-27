@@ -494,7 +494,7 @@ def qhash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 async def log_audit(r: Redis, event: dict) -> None:
-    await r.lpush(AUDIT_LIST_KEY, json.dumps(event, ensure_ascii=True)[:4000])
+    await r.lpush(AUDIT_LIST_KEY, json.dumps(event, ensure_ascii=False)[:4000])
 
 def first_row(obj):
     """Normalize Supabase responses to a single dict row."""
