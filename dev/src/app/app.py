@@ -233,6 +233,25 @@ async def ask_question_public(req: Request,
             await save_supabase_message(spbase, session_id, "user", user_question)
             conv_history = await list_messages(spbase, session_id)
 
+            # Créer une notification pour chaque nouveau message
+            await create_notification(
+                spbase=spbase,
+                company_id=request.company_id,
+                notification_type="new_message",
+                title="Nouveau message reçu",
+                content=f"Un utilisateur a envoyé un message : {user_question[:100]}{'...' if len(user_question) > 100 else ''}",
+                session_id=session_id,
+                priority="normal",
+                metadata={
+                    "external_user_id": request.external_user_id,
+                    "messenger": request.messenger,
+                    "message_time": datetime.now().isoformat(),
+                    "question_length": len(user_question)
+                },
+                action_url=f"/dashboard/chat?session={session_id}",
+                action_label="Voir la conversation"
+            )
+
             # 1) Prioritize escalate-ready case
             if await is_ready_to_escalate(redis, request.company_id, session_id):
                 go = check_contact_and_name(user_question)
