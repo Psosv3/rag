@@ -1,10 +1,11 @@
-version: '3.8'
+# version: '3.8'
 
 services:
-  rag-api:
+  rag-api-dev:
     build: .
-    container_name: rag-api
+    container_name: rag-api-dev
     restart: unless-stopped
+    env_file: .env.dev
     environment:
       - PYTHONPATH=/app:/app/dev/src
       - PYTHONUNBUFFERED=1
@@ -22,20 +23,20 @@ services:
       - HEARTBEAT_SEC=${HEARTBEAT_SEC}
       - TASK_TIMEOUT_SEC=${TASK_TIMEOUT_SEC}
       - MAX_UPLOAD_MB=${MAX_UPLOAD_MB}
-      - ENVIRONMENT=${ENVIRONMENT:-production}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=development
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - GOOGLE_APPLICATION_CREDENTIALS=/app/secret_key/vaulted-harbor-471117-v9-98f4eedafa99.json
       - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
       - BASETEN_API_KEY=${BASETEN_API_KEY}
       - CHATBOT_KEK_V1_B64=${CHATBOT_KEK_V1_B64}
     volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
+      - ./data-dev:/app/data
+      - ./logs-dev:/app/logs
       - ./secret_key:/app/secret_key
     ports:
-      - "8000:8000"  # API directement accessible
+      - "8000:8000"  # API dev sur port 8000
     networks:
-      - rag-network
+      - rag-network-dev
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health/').raise_for_status()"]
       interval: 30s
@@ -44,5 +45,6 @@ services:
       start_period: 60s
 
 networks:
-  rag-network:
-    driver: bridge 
+  rag-network-dev:
+    driver: bridge
+
