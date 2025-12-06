@@ -13,7 +13,7 @@ from datetime import datetime
 import asyncio
 from dotenv import load_dotenv
 # FastAPI
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Request, status, Security
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Request, status, Security, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -186,12 +186,27 @@ async def express_build_index(current_user: AuthUser = Depends(get_current_user)
 
 
 @app.post("/ask_public/")
-async def ask_question_public(req: Request,
-                              request: PublicQuestionRequest,
-                              #file: Optional[UploadFile] = File(None),
-                              spbase: AsyncClient = Depends(get_supabase),
-                              redis: Redis = Depends(get_redis),
-                              ):
+async def ask_question_public(
+    req: Request,
+    question: str = Form(...),
+    company_id: str = Form(...),
+    session_id: Optional[str] = Form(None),
+    external_user_id: Optional[str] = Form(None),
+    langue: str = Form('français'),
+    messenger: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
+    spbase: AsyncClient = Depends(get_supabase),
+    redis: Redis = Depends(get_redis),
+):
+    # Reconstruire l'objet request pour garder le code existant
+    request = PublicQuestionRequest(
+        question=question,
+        company_id=company_id,
+        session_id=session_id,
+        external_user_id=external_user_id,
+        langue=langue,
+        messenger=messenger
+    )
 
     # 0) Resolve/create session
     session = await get_or_create_session(spbase, redis, request.company_id, request.external_user_id, request.messenger)
