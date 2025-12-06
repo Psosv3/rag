@@ -12,7 +12,7 @@ import asyncio
 from docx import Document
 from dotenv import load_dotenv
 # FastAPI
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Request
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Request, status, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 # DataBase
@@ -184,7 +184,7 @@ async def express_build_index(current_user: AuthUser = Depends(get_current_user)
 @app.post("/ask_public/")
 async def ask_question_public(req: Request,
                               request: PublicQuestionRequest,
-                              file: Optional[UploadFile] = File(None),
+                              #file: Optional[UploadFile] = File(None),
                               spbase: AsyncClient = Depends(get_supabase),
                               redis: Redis = Depends(get_redis),
                               ):
