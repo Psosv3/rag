@@ -1,12 +1,11 @@
 from pydantic import ValidationError
 from pathlib import Path
-from tools.functions import read_instructions, handle_stream_events
-from tools.for_agents import read_dir_struct, read_file_contents
+from tools.functions import read_instructions
 from .model_server import planner_model, planner_model_backup, planner_core_model, executor_model, mcp_server_tool, mcp_server_escalator
-from agents import Agent, Runner, AgentOutputSchema
+from agents import Agent, Runner
 from agents.model_settings import ModelSettings
 from dotenv import load_dotenv
-from .model_utils import close_and_require_all, ToolCall, PlannerOutput, ExecutorOutput
+from .model_utils import close_and_require_all, PlannerOutput
 
 load_dotenv()
 BASE = Path(__file__).resolve().parent.parents[2]
@@ -88,7 +87,7 @@ async def onexia_planner(user_message, output_schema=output_schema) -> PlannerOu
                 action_type="answer",
                 tools_to_call=[],
                 continue_discussion=True,
-                citations_required=False,
+                explain_stop_discussion="",
                 exec_required=False,
                 exec_inst="",
                 user_visible_answer="Désolé, il semble que j'ai perdu ma connexion. Pourriez-vous répéter svp ?"
@@ -100,7 +99,7 @@ async def onexia_planner(user_message, output_schema=output_schema) -> PlannerOu
             action_type="answer",
             tools_to_call=[],
             continue_discussion=True,
-            citations_required=False,
+            explain_stop_discussion="",
             exec_required=False,
             exec_inst="",
             user_visible_answer="Désolé, il semble que j'ai perdu ma connexion. Pourriez-vous répéter svp ?"

@@ -350,16 +350,6 @@ Règles de segmentation :
     messages = [{"role": "system", "content": system_message}] + [{"role": "user", "content": f"Réécrit le document suivant en suivant strictement les instructions données: \n\n{doc}\n\n"}]
 
     try:
-        processed_doc =  await client_mistral.chat.complete_async(
-            model=mistral_llm,
-            messages=messages,
-            temperature=0,
-            top_p=1,
-            stream=False,
-        )
-        _content = processed_doc.choices[0].message.content
-        return _content
-    except :
         chat_completion  = await planner_model_backup.chat.completions.create(
             model=planner_core_model,
             messages=messages,
@@ -369,6 +359,17 @@ Règles de segmentation :
         )
         _content = chat_completion.choices[0].message.content.strip() or "{}"
         return _content
+    except :
+        processed_doc =  await client_mistral.chat.complete_async(
+            model=mistral_llm,
+            messages=messages,
+            temperature=0,
+            top_p=1,
+            stream=False,
+        )
+        _content = processed_doc.choices[0].message.content
+        return _content
+    
 
 async def company_resume(doc : str, client_mistral = client_mistral) -> str:
     system_message = f"""
@@ -410,11 +411,11 @@ Contacts : 04 78 00 00 00 / contact@ecotech.fr."
 """
     messages = [{"role": "system", "content": system_message}] + [{"role": "user", "content": f"Fait un résumé - synthèse de l'entreprise suivant en respectant les consignes à la lettre: \n\n{doc}\n\n"}]
 
-    processed_doc =  await client_mistral.chat.complete_async(
-        model=mistral_llm,
-        messages=messages,
-        temperature=0,
-        top_p=1,
-        stream=False
-    )
-    return processed_doc.choices[0].message.content
+    processed_doc =  await planner_model_backup.chat.completions.create(
+            model=planner_core_model,
+            messages=messages,
+            temperature=0,
+            top_p=1,
+            stream=False,
+        )
+    return processed_doc.choices[0].message.content.strip() or "{}"

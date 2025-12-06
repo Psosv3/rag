@@ -56,4 +56,6 @@ async def translate(texts: Union[str, List[str]], from_source: str, to_target: s
     tasks = [asyncio.to_thread(_translate_batch_sync, batche, from_source, to_target) for batche in batches]
     results_nested = await asyncio.gather(*tasks)
 
-    return [txt for batch in results_nested for txt in batch]
+    result = " ".join(txt for batch in results_nested for txt in batch)
+    
+    return result

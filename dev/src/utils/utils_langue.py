@@ -4,6 +4,7 @@ dict_abreviation_mg = {
     "manahoana": "manao ahoana", 
     "mieraba": "miarahaba",
     "miaraba": "miarahaba",
+    "kaiza": "manao ahoana",
     
     # Contractions de "ahoana" (comment)
     "aona": "ahoana",
@@ -294,6 +295,7 @@ dict_abreviation_mg = {
 dict_remplacement_mg = {
     "mpitantana": "tompon'andraikitra",
     "olona": "tompon'andraikitra", 
+    "fanatitray":"tolotra na servisinay",
     "fanatitra" : "serivisy",
     "fanendrena":"rendez-vous",
     "angon-drakitray" : "angon-drakitra",

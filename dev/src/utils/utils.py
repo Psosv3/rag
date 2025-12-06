@@ -141,9 +141,9 @@ def load_documents(data_dir):
     docs = []
     for fname in os.listdir(data_dir):
         fpath = os.path.join(data_dir, fname)
-        if fname.endswith(".pdf"):
+        if fname.endswith(".pdf") and fname.startswith("gzel8!a3_"): #TODO: enlever ce prefix temporaire gzel8!a3_ et le gérer proprement
             docs.append(read_pdf(fpath))
-        elif fname.endswith(".docx"):
+        elif fname.endswith(".docx") and fname.startswith("gzel8!a3_"): #TODO: enlever ce prefix temporaire gzel8!a3_ et le gérer proprement
             docs.append(read_docx(fpath))
 
     return docs
@@ -219,18 +219,28 @@ def check_difference(liste_1, liste_2):
     missing = set(liste_1).difference(liste_2)  # éléments dans liste_1 mais pas dans liste_2
     return (len(missing) == 0), list(missing) # retourne la verif + liste des elements intrus
 
-async def sanitize_translate(phrase, dictionnaire, from_source, to_target):
+async def sanitize_translate(phrase, from_source, to_target, dict_input_mg=dict_abreviation_mg, dict_output_mg=dict_remplacement_mg): 
     def remplacement(match):
         mot = match.group(0)
-        return dictionnaire.get(mot, mot)
-    
-    # Expression régulière pour trouver les mots isolés
-    pattern = r'\b(' + '|'.join(re.escape(mot) for mot in dictionnaire.keys()) + r')\b'
-    phrase = re.sub(pattern, remplacement, phrase)
+        if from_source == "mg" and to_target == "fr":
+            return dict_input_mg.get(mot, mot)
+        else:
+            return dict_output_mg.get(mot, mot)
+
+    # Expression régulière pour trouver les mots isolés à remplacer avant translation
+    if from_source == "mg" and to_target == "fr":
+        pattern = r'\b(' + '|'.join(re.escape(mot) for mot in dict_input_mg.keys()) + r')\b'
+        phrase = re.sub(pattern, remplacement, phrase)
 
     #translate franch
     rslt = await translate(phrase, from_source, to_target)
-    return rslt[0]
+
+    # Expression régulière pour trouver les mots isolés à remplacer après translation
+    if from_source == "fr" and to_target == "mg":
+        pattern = r'\b(' + '|'.join(re.escape(mot) for mot in dict_output_mg.keys()) + r')\b'
+        rslt = re.sub(pattern, remplacement, rslt)
+
+    return rslt
 
 
 def split_documents(docs: List[str], delimiter: str = "<!--|||SECTION|||-->") -> List[str]:

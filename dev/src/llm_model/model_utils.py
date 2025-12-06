@@ -14,7 +14,7 @@ class PlannerOutput(BaseModel):
     action_type: Literal["answer","tool","reject","clarify","escalate"]
     tools_to_call: List[ToolCall] = Field(default_factory=list)
     continue_discussion: bool = True
-    citations_required: bool = False
+    explain_stop_discussion: str = ""
     exec_required: bool = False
     exec_inst: str = ""
     user_visible_answer: str = ""

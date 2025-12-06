@@ -2,18 +2,18 @@ import os
 import json
 import uuid
 import hashlib
-import asyncio
 import aiofiles
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Any, Dict, Optional, Annotated
+from typing import Optional, List, Any, Dict, Optional
 from operator import itemgetter
 from io import BytesIO
 import docx
 from PyPDF2 import PdfReader
 from dotenv import load_dotenv
+from zipfile import BadZipFile
 # FastAPI
-from fastapi import FastAPI, Depends, UploadFile, HTTPException, Request, status, Security
+from fastapi import FastAPI, Depends, UploadFile, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 # Pydantic
 from pydantic import BaseModel, AnyHttpUrl
@@ -28,7 +28,7 @@ from llm_model.onexia import onexia_executor, onexia_escalator
 # Rag
 from rag.rag import rewrite_rag_augmentor
 # Utils
-from utils.utils import read_pdf, read_docx, save_to_pdf, save_to_docx, extract_emails, extract_intern_emails, check_difference, strip_emails, maintenant_fr, ZoneInfo
+from utils.utils import save_to_pdf, save_to_docx, extract_emails, sanitize_translate, check_difference, strip_emails, maintenant_fr, ZoneInfo
 # security encrypt/decrypt message
 from security.security import encrypt, decrypt
 
@@ -255,10 +255,23 @@ async def get_or_create_session(spbase : AsyncClient, redis: Redis, company_id: 
     return session
 
 
-async def save_supabase_message(spbase: AsyncClient, session_id: str, role: str, content: str, manual_response: bool=False) -> dict:
+async def save_supabase_message(spbase: AsyncClient,
+                                session_id: str,
+                                role: str,
+                                content: str,
+                                original_content: str,
+                                user_language: str,
+                                manual_response: bool=False,
+                                stop_discuss_reason: Optional[str] = None) -> dict:
     message_id = str(uuid.uuid4())
     res = await spbase.table(TABLE_MESSAGE)\
-        .insert({"message_id": message_id, "session_id": session_id, "role": role, "content": encrypt(content)})\
+        .insert({"message_id": message_id,
+                 "session_id": session_id,
+                 "role": role,
+                 "content": encrypt(content),
+                 "original_content": encrypt(original_content),
+                 "user_language": user_language,
+                 "stop_discuss_reason": encrypt(stop_discuss_reason) if stop_discuss_reason else ""})\
         .execute()
     
     if manual_response:
@@ -426,7 +439,7 @@ def build_chat_messages(messages_history,           # List[PublicChatMessage] tr
 
 ###################################################### Conversation utils & redis ######################################################
 
-def validate_question(question: str, max_len: int = _DEFAULT_Q_MAX) -> str:
+def validate_quest_length(question: str, max_len: int = _DEFAULT_Q_MAX) -> str:
     """
     Basic abuse-prevention for long LLM prompts.
     """
@@ -631,6 +644,7 @@ async def run_executor_agent(supabase,
                             session_id: Optional[str],
                             company_id: str,
                             exec_plan: Dict[str, Any],
+                            user_language: str,
                             ) -> Dict[str, Any]:
     exec_plan = dict(exec_plan or {})
     exec_instruct = exec_plan["exec_inst"] 
@@ -643,16 +657,21 @@ async def run_executor_agent(supabase,
             exec_instruct = strip_emails(exec_instruct) + f"\n\n### LISTE DES CONTACTS INTERNES ###\n\nVoici la liste des contacts privés dans votre entreprise. Ne l'utilisez que si vous en avez besoin, comme contacter un responsable ou envoyer un email par exemple. Choisissez bien convenablement la bonne personne en fonction de son poste et de sa description de poste. Attention, le rôle peut ne pas correspondre exactement à ce que vous cherchez. Se référer plutôt à la descritption du poste pour le choix de la meilleure personne : \n\n<list_contact>\n"+ str(list_contact) +"\n</list_contact>\n\n"
         else :
             denied_answer = f"Je suis désolé, je me rends compte que je ne suis pas autorisé à envoyer l'email au destinataire : {', '.join(intru for intru in list_intrus)}."
-            await save_supabase_message(supabase, session_id, "assistant", denied_answer)
-            return denied_answer
+            if user_language.lower() in ["malagasy", "malgache", "mg"]:
+                target_denied_answer = f"Miala tsiny tompoko, tsy manana alàlana handefa mailaka amin'ity na ireto aho: {', '.join(intru for intru in list_intrus)}."
+            else:
+                target_denied_answer = denied_answer
+            await save_supabase_message(supabase, session_id, "assistant", denied_answer, target_denied_answer, user_language)
+            return target_denied_answer
 
     out = await onexia_executor(exec_instruct)
     try :
         out = json.loads(out) 
         return_reponse = out['message'] + out['ask'] if  out['ask'].lower() not in ["null", "none",""] else out['message']
+        target_return_reponse = return_reponse if user_language.lower() not in ["malagasy", "malgache", "mg"] else await sanitize_translate(return_reponse, "fr", "mg")
         if session_id:
-            await save_supabase_message(supabase, session_id, "assistant", return_reponse)
-        return return_reponse
+            await save_supabase_message(supabase, session_id, "assistant", return_reponse, target_return_reponse, user_language) # save assistant message
+        return target_return_reponse
     except Exception as e:
         return "Je suis désolé, j'ai subi une petite déconnexion. Pourriez-vous répéter svp ?"
 
@@ -722,27 +741,45 @@ async def load_intern_contact(sp: AsyncClient, company_id: str) -> List[Dict[str
                   .execute()
     return res.data or []
 
-async def safe_write_augmented_file(file: UploadFile, destination: Path):
 
-    ext = Path(file.filename).suffix.lower()
-    content = await file.read()  # read entire file into memory
+async def safe_write_augmented_file(filename: str,
+                                    filecontent: str,
+                                    destination: Path,
+                                    augment_rag: bool) -> None:
+    """Reads an uploaded file, optionally augments its text via AugmentRAG, and saves it to destination."""
+    ext = (Path(filename).suffix or "").lower()
+    if ext not in {".pdf", ".docx"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported file extension: {ext}")
+
+    if not filecontent:
+        raise HTTPException(status_code=422, detail="File empty or unreadable")
 
     if ext == ".pdf":
-        original_text = "".join(page.extract_text() or "" for page in PdfReader(BytesIO(content)).pages)
-    elif ext == ".docx":
-        original_text = "\n".join(p.text for p in docx.Document(BytesIO(content)).paragraphs)
-    else:
-        raise HTTPException(status_code=400, detail=f"Unsupported file extension: {ext}")
+        try:
+            reader = PdfReader(BytesIO(filecontent))
+            original_text = "".join(page.extract_text() or "" for page in reader.pages)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail="Invalid or unreadable PDF") from exc
+    else:  # .docx
+        try:
+            document = docx.Document(BytesIO(filecontent))
+            original_text = "\n".join(p.text for p in document.paragraphs)
+        except BadZipFile as exc:
+            raise HTTPException(status_code=422, detail="Invalid or unreadable DOCX") from exc
 
     if not original_text.strip():
         raise HTTPException(status_code=422, detail="File empty or unreadable")
-    
-    try:
-        augmented_text = await rewrite_rag_augmentor(original_text)
-    except :
-        augmented_text = original_text
+
+    if augment_rag:
+        try:
+            final_text = await rewrite_rag_augmentor(original_text)
+        except Exception:
+            final_text = original_text
+    else:
+        final_text = original_text
 
     if ext == ".pdf":
-        save_to_pdf(augmented_text, destination)
-    else:
-        save_to_docx(augmented_text, destination)
+        save_to_pdf(final_text, destination)
+    else:  # .docx
+        save_to_docx(final_text, destination)
+

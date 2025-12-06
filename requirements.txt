@@ -33,7 +33,6 @@ certifi
 truststore
 aiofiles
 torch
-transformers
 openai-agents
 openai
 google-cloud-translate
@@ -42,4 +41,3 @@ langchain<0.2
 langchain-community
 langchain-openai
 langchain-mistralai
-uvloop
