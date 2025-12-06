@@ -12,7 +12,7 @@ import asyncio
 from docx import Document
 from dotenv import load_dotenv
 # FastAPI
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Request, status, Security
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 # DataBase
@@ -26,6 +26,7 @@ from .app_utils import (
     AUDIT_LIST_KEY,
     LIST_TEMP_RESP,
     LIST_ESCALATE_RESP,
+    ALLOWED_FILES_TYPES,
     # Variable
     redis_pool,
     redis_client,
@@ -37,8 +38,6 @@ from .app_utils import (
     # Functions
     refresh_companies_into_state,
     get_current_user,
-    sanitize_filename,
-    safe_write_file,
     get_supabase,
     get_redis,
     get_or_create_session,
@@ -66,6 +65,7 @@ from .app_utils import (
     get_company_chatbot_signature,
     build_chat_messages,
     stop_chatbot,
+    process_file,
     )
 # rag & models
 from rag.rag import get_rag_context, rebuild_company_index, build_index, get_company_data_dir, get_company_stats, clear_company_cache, rewrite_rag_augmentor
@@ -183,11 +183,25 @@ async def express_build_index(current_user: AuthUser = Depends(get_current_user)
 
 @app.post("/ask_public/")
 async def ask_question_public(req: Request,
-                              request: PublicQuestionRequest,
-                              #file: Optional[UploadFile] = File(None),
+                              question: str = Form(...),
+                              company_id: str = Form(...),
+                              session_id: Optional[str] = Form(None),
+                              external_user_id: Optional[str] = Form(None),
+                              langue: str = Form('français'),
+                              messenger: Optional[str] = Form(None),
+                              file: Optional[UploadFile] = File(None),
                               spbase: AsyncClient = Depends(get_supabase),
                               redis: Redis = Depends(get_redis),
                               ):
+    # Reconstruire l'objet request pour garder le code existant
+    request = PublicQuestionRequest(question=question,
+                                    company_id=company_id,
+                                    session_id=session_id,
+                                    external_user_id=external_user_id,
+                                    langue=langue,
+                                    messenger=messenger,
+                                    file=file,
+                                    )
 
     # 0) Resolve/create session
     session = await get_or_create_session(spbase, redis, request.company_id, request.external_user_id, request.messenger)
@@ -206,9 +220,9 @@ async def ask_question_public(req: Request,
     # 1) b) sanitize_malagasy_sentence, dict_abreviation_mg
     user_language = request.langue.lower() if request.langue else None
     if user_language in ("malgache", "malagasy","mg"):
-        user_question = await sanitize_translate(original_question.lower(), "mg", "fr")
+        user_text_question = await sanitize_translate(original_question.lower(), "mg", "fr")
     else:
-        user_question = original_question
+        user_text_question = original_question
 
     # 2) event_stream
     async def event_stream() -> AsyncGenerator[str, None]:
@@ -227,8 +241,30 @@ async def ask_question_public(req: Request,
                     "external_user_id": request.external_user_id,
                 })
                 return
-            
-            # 1) Persist user message & load conv history
+
+            # 1) process text and file, persist message, create notifications and escalate check
+            # 1) a) process uploaded file (.png ou .jpg) if any 
+            if request.file :
+                if request.file.content_type not in ALLOWED_FILES_TYPES:
+                    raise HTTPException(status_code=400 ,detail="Seuls les fichiers images PNG, JPG et WEBP sont acceptés.")
+                try:
+                    content_file = await process_file(request.file, settings.MAX_UPLOAD_MB, ALLOWED_FILES_TYPES)
+                    user_question = f"L'utilisateur a envoyé un fichier externe {request.file.content_type}. Voici ce qu'il contient:\n\n<CONTENU_IMAGE> :\n{content_file}\n</CONTENU_IMAGE>. \n\nVoici le message de l'utilisateur : \n{user_text_question}"
+                except Exception as e:
+                    print(f"***** ERREUR process_file: {e}")
+                    await save_supabase_message(spbase, session_id, "user", user_text_question, original_question, user_language)
+                    error_file_answer = f"Oups.. je n'ai pas pu traiter le fichier que vous avez envoyé. Pouvez-vous vous assurer qu'il est bien valide ({settings.MAX_UPLOAD_MB} Mo max) et de me le renvoyer svp ? Merci! :)"
+                    yield sse_data({
+                        "answer": error_file_answer,
+                        "company_id": request.company_id,
+                        "session_id": session_id,
+                        "external_user_id": request.external_user_id,
+                    })
+                    return
+            else:
+                user_question = user_text_question
+ 
+            # 1) b) Persist user message & load conv history
             await save_supabase_message(spbase,
                                         session_id,
                                         "user",
@@ -238,7 +274,7 @@ async def ask_question_public(req: Request,
                                         )
             conv_history = await list_messages(spbase, session_id)
 
-            # Créer une notification pour chaque nouveau message
+            # 1) c) Créer une notification pour chaque nouveau message
             await create_notification(
                 spbase=spbase,
                 company_id=request.company_id,
@@ -257,14 +293,12 @@ async def ask_question_public(req: Request,
                 action_label="Voir la conversation"
             )
 
-            # 1) Prioritize escalate-ready case
+            # 1) d) Prioritize escalate-ready case
             if await is_ready_to_escalate(redis, request.company_id, session_id):
                 go = check_contact_and_name(user_question)
                 if go == "OK":
                     await remove_escalate_session(redis, request.company_id, session_id)
-
                     await escalate_to_humans(conv_history, spbase, session_id, request)
-
                     # Créer une notification pour le dashboard
                     await create_notification(
                         spbase=spbase,
@@ -328,31 +362,15 @@ async def ask_question_public(req: Request,
             company_name, company_resume, company_extra_prompt, company_signature = await get_company_name_resume_prompt_signature(app, request.company_id)
             syst_msg = planner_syst_instructions
             dev_msg = developper_message(company_name, company_resume, company_extra_prompt)
-
-            print("\n*** < DEBUG sujet RAG dans app.py > ***\n")
-            # conv_history = [{'role': 'user', 'content': "Est ce que c'est trop tard pour l inscription", 'created_at': '2025-12-05T00:11:38.219359+00:00'},
-            # {'role': 'assistant', 'content': "Bonjour, la date limite d’inscription était le 31 octobre 2025. Nous sommes maintenant le 3 décembre 2025, il est donc malheureusement trop tard pour s’inscrire cette année.", 'created_at': '2025-12-05T00:11:40.918228+00:00'},
-            # {'role': 'user', 'content': "Est ce qu'il n y a pas un autre moyen s il vous plaît", 'created_at': '2025-12-05T00:12:03.26879+00:00'},
-            # {'role': 'assistant', 'content': 'Je suis désolé, nous n’avons pas d’autre procédure prévue après la date limite du 31 octobre 2025. Souhaitez‑vous être mis en relation avec mon responsable pour examiner votre situation ?', 'created_at': '2025-12-05T00:12:05.822267+00:00'},
-            # {'role': 'user', 'content': "Et c'est quand la rentrée", 'created_at': '2025-12-05T00:12:26.389318+00:00'}]
-            # {'role': 'assistant', 'content': 'Je suis vraiment désolé, je dois vous laisser ici pour aujourd'hui, en vous remerciant chaleureusement. Prenez bien soin de vous et à bientôt! :)', 'created_at': '2025-12-05T00:12:28.716698+00:00'}]
-            
-            print("\ndocs:\n*****************************\n\n", docs)
-            
-
-
             msgs = build_chat_messages(messages_history=conv_history,
                                        user_input=user_question,
                                        context=docs,
                                        system_message=syst_msg,
                                        dev_message=dev_msg)
-            
             # 4) Planner
             planner_out: PlannerOutput = await onexia_planner(msgs)
 
             if not planner_out.continue_discussion:
-                print("\nplanner_out.user_visible_answer:", planner_out.user_visible_answer)
-                print("\nplanner_out.explain_stop_discussion:", planner_out.explain_stop_discussion)
                 await forbiden_session(redis, request.company_id, session_id)
                 answer_mg = "Tena miala tsiny indrindra tompoko, voatery aho hamarana ny resantsika eto. Mankasitraka indrindra dia mirary soa."
                 answer_fr = "Je suis vraiment désolé, je dois vous laisser ici pour aujourd'hui, en vous remerciant chaleureusement. Prenez bien soin de vous et à bientôt! :)"
@@ -410,11 +428,9 @@ async def ask_question_public(req: Request,
                     clarif_bis = "Pouvez-vous me fournir un peu plus de détail svp ?"
                     yield sse_data(await respond_and_log(clarif_bis, request.langue, company_signature))
                     return
-                print("\nplanner_out.user_visible_answer:", planner_out.user_visible_answer)
-                print("\nplanner_out.explain_stop_discussion:", planner_out.explain_stop_discussion)
                 yield sse_data(await respond_and_log(planner_out.user_visible_answer, request.langue, company_signature))
                 return
-            print("\n*** < / DEBUG sujet RAG dans app.py > ***\n")
+            
             if planner_out.action_type == "escalate":
                 await add_escalate_session(redis, request.company_id, session_id)
                 prep_escalate_resp = random.choice(LIST_ESCALATE_RESP)
@@ -589,9 +605,7 @@ async def get_document_content(
     current_user: AuthUser = Depends(get_current_user),
 ):
     """Récupère le contenu textuel d'un fichier DOCX"""
-    try:
-        from docx import Document
-        
+    try:     
         company_id = current_user.company_id or "default-company"
         company_data_dir = get_company_data_dir(company_id, DATA_DIR)
         file_path = os.path.join(company_data_dir, filename)

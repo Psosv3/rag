@@ -1,8 +1,10 @@
 import os
 import json
+import shutil
 import uuid
 import hashlib
 import aiofiles
+import mimetypes
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Any, Dict, Optional
@@ -15,6 +17,7 @@ from zipfile import BadZipFile
 # FastAPI
 from fastapi import FastAPI, Depends, UploadFile, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.concurrency import run_in_threadpool
 # Pydantic
 from pydantic import BaseModel, AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,10 +28,12 @@ from supabase import AsyncClient
 import jwt
 # Models
 from llm_model.onexia import onexia_executor, onexia_escalator
+from llm_model.model_file import _save_upload_file_streaming, generate_image_path, _delete_saved_image
+from llm_model.model_server import image_model, image_core_model
 # Rag
 from rag.rag import rewrite_rag_augmentor
 # Utils
-from utils.utils import save_to_pdf, save_to_docx, extract_emails, sanitize_translate, check_difference, strip_emails, maintenant_fr, ZoneInfo
+from utils.utils import encode_image, save_to_pdf, save_to_docx, extract_emails, sanitize_translate, check_difference, strip_emails, maintenant_fr, ZoneInfo
 # security encrypt/decrypt message
 from security.security import encrypt, decrypt
 
@@ -62,6 +67,7 @@ class PublicQuestionRequest(BaseModel):
     question: str
     langue: Optional[str] = None
     messenger: Optional[bool] = False
+    file: Optional[UploadFile] = None
 
 class FeedbackRequest(BaseModel):
     session_id: str
@@ -108,6 +114,11 @@ LIST_ESCALATE_RESP =[
     "Je vais transmettre votre demande à mon responsable ; pourriez-vous d’abord m’indiquer votre nom et vos coordonnées (adresse e-mail et/ou numéro de téléphone) ?"
 ]
 
+ALLOWED_FILES_TYPES: Dict[str, str] = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
 
 ###################################################### settings ######################################################
 settings = Settings()
@@ -449,6 +460,50 @@ def validate_quest_length(question: str, max_len: int = _DEFAULT_Q_MAX) -> str:
     cleaned = " ".join(question.strip().split())
     return (len(cleaned) > max_len, cleaned)
 
+async def process_file(upload_file: UploadFile, max_size_mb: int, allowed_types: Optional[dict]) -> str:
+    ext = Path(upload_file.filename).suffix.lower()
+    mime_guess, _ = mimetypes.guess_type(upload_file.filename)
+    mime_hint = (mime_guess or upload_file.content_type or "").lower()
+
+    if upload_file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Unsupported image type")
+    if (ext == ".jpg" or ext == ".jpeg") and "jpeg" not in mime_hint: # Make sure the extension and MIME type agree
+        raise HTTPException(status_code=400, detail="MIME type mismatch for jpeg/jpg")
+    if ext == ".png" and "png" not in mime_hint:
+        raise HTTPException(status_code=400, detail="MIME type mismatch for png")
+    if ext == ".webp" and "webp" not in mime_hint:
+        raise HTTPException(status_code=400, detail="MIME type mismatch for webp")
+    
+    dest_path = generate_image_path(upload_file.content_type, allowed_types)
+    # Offload blocking file I/O to threadpool for high concurrency.
+    try:
+        await run_in_threadpool(_save_upload_file_streaming, upload_file, dest_path, max_size_mb * 1024 * 1024)
+    finally:
+        # Always close and delete the underlying file descriptor.
+        upload_file.file.close()
+
+    base64_image = encode_image(dest_path)
+    chat_completion = await image_model.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Liste moi en détail ce que tu vois dans cette image. Sois concis, précis mais complet. Interdiction d'inventer et de donner des informations non présentes dans l'image."},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{upload_file.content_type};base64,{base64_image}",
+                        },
+                    },
+                ],
+            }
+        ],
+        model=image_core_model,
+    )
+    content_file = chat_completion.choices[0].message.content
+    _delete_saved_image(dest_path)
+    return content_file
+
 async def prep_input_embed(conv_history: List[dict], user_question: str, len_hist: int = 3) -> str:
     """
     Prépare l'historique de conversation pour l'embedding.
@@ -637,6 +692,13 @@ async def safe_write_file(final_path: Path, up: UploadFile, max_bytes: int) -> N
             await f.write(chunk)
 
     tmp_path.replace(final_path)
+
+def save_upload_file(upload_file: UploadFile, destination: Path) -> None:
+    """
+    Save an UploadFile to the given destination path in a streaming way.
+    """
+    with destination.open("wb") as buffer:
+        shutil.copyfileobj(upload_file.file, buffer)
 
 ###################################################### Upload helpers ######################################################
 

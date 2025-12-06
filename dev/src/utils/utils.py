@@ -1,6 +1,7 @@
 import os
 from PyPDF2 import PdfReader
 import docx
+import base64
 import re, unicodedata
 from dotenv import load_dotenv
 from typing import List, Dict, Set
@@ -298,3 +299,9 @@ def _tokens(s: str) -> Set[str]:
 def _lexical_hit(text: str, q_tokens: Set[str]) -> int:
     # nombre de tokens en commun (sert de petit boost)
     return len(_tokens(text) & q_tokens)
+
+
+# Function to encode the image
+def encode_image(image_path):
+  with open(image_path, "rb") as image_file:
+    return base64.b64encode(image_file.read()).decode('utf-8')

@@ -24,10 +24,10 @@ SELF_CHECK_PROMPT = (
     "Contexte:\n{context}\n\nRéponse:\n{answer}\n\nVerdict:"
 )
 
-def rebuild_company_index(company_id: str, DATA_DIR, HTTPException):
+async def rebuild_company_index(company_id: str, DATA_DIR, HTTPException):
     """Fonction pour reconstruire l'index d'une entreprise (utilisée en arrière-plan)."""
     try:
-        build_index(company_id, DATA_DIR, HTTPException)
+        await build_index(company_id, DATA_DIR, HTTPException)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la re-construction de l'index: {str(e)}")
 
