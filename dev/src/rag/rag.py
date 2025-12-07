@@ -11,7 +11,8 @@ from pathlib import Path
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.docstore.in_memory import InMemoryDocstore
 from utils.utils import load_documents, split_documents, _tokens, _lexical_hit
-from llm_model.model_server import client_mistral, mistral_llm
+from llm_model.model_server import client_mistral, mistral_llm, planner_model_backup, planner_core_model
+
 
 # Load environment variables
 load_dotenv()
@@ -23,10 +24,10 @@ SELF_CHECK_PROMPT = (
     "Contexte:\n{context}\n\nRéponse:\n{answer}\n\nVerdict:"
 )
 
-def rebuild_company_index(company_id: str, DATA_DIR, HTTPException):
+async def rebuild_company_index(company_id: str, DATA_DIR, HTTPException):
     """Fonction pour reconstruire l'index d'une entreprise (utilisée en arrière-plan)."""
     try:
-        build_index(company_id, DATA_DIR, HTTPException)
+        await build_index(company_id, DATA_DIR, HTTPException)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la re-construction de l'index: {str(e)}")
 
@@ -320,20 +321,21 @@ async def rewrite_rag_augmentor(doc : str, client_mistral = client_mistral) -> s
 
     system_message = f"""
 Tu es un assistant de restructuration pour un pipeline RAG.
-Ton rôle est de splitter un document en le segmentant en section thématiques (séparation par balise), 
+Ton rôle est de baliser un document en le segmentant en section thématiques (séparation par balise), 
 tout en respectant strictement sa structure et son ordre d'origine.
 
 Balise : <!--|||SECTION|||-->
 
 Contraintes de sortie (obligatoires) :
-- Ne supprime aucun détail d'information.
+- Ne retire aucune information du document original.
+- Ne rajoute aucune information qui n'est pas dans le document original.
 - Conserve exactement l'ordre du document. Ne déplace pas, ne réorganise pas, ne fusionne pas de passages éloignés.
 - Regroupe uniquement les parties consécutives qui concernent le même sujet / thème, dans une seule section.
 - Il est interdit de créer plusieurs section successives avec le même titre ou le même sujet.
 - Chaque section doit être structurée ainsi :
 
 ### Sujet : <titre court, factuel, issu du texte>
-<paragraphe(s) reproduits à l'identique>
+<paragraphe(s) réécrits pour clarté, sans changer le sens>
 <!--|||SECTION|||-->
 
 - Le sous-titre et son contenu doivent toujours être dans le même bloc, avant la balise.
@@ -347,14 +349,28 @@ Règles de segmentation :
 """
     messages = [{"role": "system", "content": system_message}] + [{"role": "user", "content": f"Réécrit le document suivant en suivant strictement les instructions données: \n\n{doc}\n\n"}]
 
-    processed_doc =  await client_mistral.chat.complete_async(
-        model=mistral_llm,
-        messages=messages,
-        temperature=0,
-        top_p=1,
-        stream=False
-    )
-    return processed_doc.choices[0].message.content
+    try:
+        chat_completion  = await planner_model_backup.chat.completions.create(
+            model=planner_core_model,
+            messages=messages,
+            temperature=0,
+            top_p=1,
+            stream=False,
+        )
+        _content = chat_completion.choices[0].message.content.strip() or "{}"
+        return _content
+    except :
+        print("[ERROR] : fallback rewrite_rag_augmentor to Mistral")
+        processed_doc =  await client_mistral.chat.complete_async(
+            model=mistral_llm,
+            messages=messages,
+            temperature=0,
+            top_p=1,
+            stream=False,
+        )
+        _content = processed_doc.choices[0].message.content
+        return _content
+
 
 async def company_resume(doc : str, client_mistral = client_mistral) -> str:
     system_message = f"""

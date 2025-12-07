@@ -1,20 +1,23 @@
 import os
 import json
+import shutil
 import uuid
 import hashlib
-import asyncio
 import aiofiles
+import mimetypes
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Any, Dict, Optional, Annotated
+from typing import Optional, List, Any, Dict, Optional
 from operator import itemgetter
 from io import BytesIO
 import docx
 from PyPDF2 import PdfReader
 from dotenv import load_dotenv
+from zipfile import BadZipFile
 # FastAPI
-from fastapi import FastAPI, Depends, UploadFile, HTTPException, Request, status, Security
+from fastapi import FastAPI, Depends, UploadFile, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.concurrency import run_in_threadpool
 # Pydantic
 from pydantic import BaseModel, AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,10 +28,12 @@ from supabase import AsyncClient
 import jwt
 # Models
 from llm_model.onexia import onexia_executor, onexia_escalator
+from llm_model.model_file import _save_upload_file_streaming, generate_image_path, _delete_saved_image
+from llm_model.model_server import image_model, image_core_model
 # Rag
 from rag.rag import rewrite_rag_augmentor
 # Utils
-from utils.utils import read_pdf, read_docx, save_to_pdf, save_to_docx, extract_emails, extract_intern_emails, check_difference, strip_emails, maintenant_fr, ZoneInfo
+from utils.utils import encode_image, save_to_pdf, save_to_docx, extract_emails, sanitize_translate, check_difference, strip_emails, maintenant_fr, ZoneInfo
 # security encrypt/decrypt message
 from security.security import encrypt, decrypt
 
@@ -48,7 +53,8 @@ class Settings(BaseSettings):
     HEARTBEAT_SEC: int = os.getenv("HEARTBEAT_SEC")
     TASK_TIMEOUT_SEC: int = os.getenv("TASK_TIMEOUT_SEC")
     MAX_UPLOAD_MB: int = os.getenv("MAX_UPLOAD_MB")
-    ALLOWED_UPLOAD_EXTS: tuple = (".pdf", ".docx")
+    ALLOWED_UPLOAD_EXTS: tuple = (".pdf", ".docx", ".xlsx", ".csv")
+    ALLOWED_FILES_TYPES: Dict[str, str] = {"image/jpeg": ".jpg","image/png": ".png","image/webp": ".webp"}
 
 class AuthUser(BaseModel):
     sub: str
@@ -62,6 +68,7 @@ class PublicQuestionRequest(BaseModel):
     question: str
     langue: Optional[str] = None
     messenger: Optional[bool] = False
+    file: Optional[UploadFile] = None
 
 class FeedbackRequest(BaseModel):
     session_id: str
@@ -107,6 +114,11 @@ LIST_ESCALATE_RESP =[
     "Pour faciliter la prise en charge par mon responsable, merci de me communiquer votre nom ainsi que vos coordonnées (adresse e-mail et/ou numéro de téléphone).",
     "Je vais transmettre votre demande à mon responsable ; pourriez-vous d’abord m’indiquer votre nom et vos coordonnées (adresse e-mail et/ou numéro de téléphone) ?"
 ]
+
+
+
+
+
 
 
 ###################################################### settings ######################################################
@@ -255,10 +267,23 @@ async def get_or_create_session(spbase : AsyncClient, redis: Redis, company_id: 
     return session
 
 
-async def save_supabase_message(spbase: AsyncClient, session_id: str, role: str, content: str, manual_response: bool=False) -> dict:
+async def save_supabase_message(spbase: AsyncClient,
+                                session_id: str,
+                                role: str,
+                                content: str,
+                                original_content: str,
+                                user_language: str,
+                                manual_response: bool=False,
+                                stop_discuss_reason: Optional[str] = None) -> dict:
     message_id = str(uuid.uuid4())
     res = await spbase.table(TABLE_MESSAGE)\
-        .insert({"message_id": message_id, "session_id": session_id, "role": role, "content": encrypt(content)})\
+        .insert({"message_id": message_id,
+                 "session_id": session_id,
+                 "role": role,
+                 "content": encrypt(content),
+                 "original_content": encrypt(original_content),
+                 "user_language": user_language,
+                 "stop_discuss_reason": encrypt(stop_discuss_reason) if stop_discuss_reason else ""})\
         .execute()
     
     if manual_response:
@@ -426,7 +451,7 @@ def build_chat_messages(messages_history,           # List[PublicChatMessage] tr
 
 ###################################################### Conversation utils & redis ######################################################
 
-def validate_question(question: str, max_len: int = _DEFAULT_Q_MAX) -> str:
+def validate_quest_length(question: str, max_len: int = _DEFAULT_Q_MAX) -> str:
     """
     Basic abuse-prevention for long LLM prompts.
     """
@@ -435,6 +460,50 @@ def validate_question(question: str, max_len: int = _DEFAULT_Q_MAX) -> str:
                             detail="Demande utilisateur vide")
     cleaned = " ".join(question.strip().split())
     return (len(cleaned) > max_len, cleaned)
+
+async def process_file(upload_file: UploadFile, max_size_mb: int, allowed_types: Optional[dict]) -> str:
+    ext = Path(upload_file.filename).suffix.lower()
+    mime_guess, _ = mimetypes.guess_type(upload_file.filename)
+    mime_hint = (mime_guess or upload_file.content_type or "").lower()
+
+    if upload_file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Unsupported image type")
+    if (ext == ".jpg" or ext == ".jpeg") and "jpeg" not in mime_hint: # Make sure the extension and MIME type agree
+        raise HTTPException(status_code=400, detail="MIME type mismatch for jpeg/jpg")
+    if ext == ".png" and "png" not in mime_hint:
+        raise HTTPException(status_code=400, detail="MIME type mismatch for png")
+    if ext == ".webp" and "webp" not in mime_hint:
+        raise HTTPException(status_code=400, detail="MIME type mismatch for webp")
+    
+    dest_path = generate_image_path(upload_file.content_type, allowed_types)
+    # Offload blocking file I/O to threadpool for high concurrency.
+    try:
+        await run_in_threadpool(_save_upload_file_streaming, upload_file, dest_path, max_size_mb * 1024 * 1024)
+    finally:
+        # Always close and delete the underlying file descriptor.
+        upload_file.file.close()
+
+    base64_image = encode_image(dest_path)
+    chat_completion = await image_model.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Liste moi en détail ce que tu vois dans cette image. Sois concis, précis mais complet. Interdiction d'inventer et de donner des informations non présentes dans l'image."},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{upload_file.content_type};base64,{base64_image}",
+                        },
+                    },
+                ],
+            }
+        ],
+        model=image_core_model,
+    )
+    content_file = chat_completion.choices[0].message.content
+    _delete_saved_image(dest_path)
+    return content_file
 
 async def prep_input_embed(conv_history: List[dict], user_question: str, len_hist: int = 3) -> str:
     """
@@ -625,12 +694,20 @@ async def safe_write_file(final_path: Path, up: UploadFile, max_bytes: int) -> N
 
     tmp_path.replace(final_path)
 
+def save_upload_file(upload_file: UploadFile, destination: Path) -> None:
+    """
+    Save an UploadFile to the given destination path in a streaming way.
+    """
+    with destination.open("wb") as buffer:
+        shutil.copyfileobj(upload_file.file, buffer)
+
 ###################################################### Upload helpers ######################################################
 
 async def run_executor_agent(supabase,
                             session_id: Optional[str],
                             company_id: str,
                             exec_plan: Dict[str, Any],
+                            user_language: str,
                             ) -> Dict[str, Any]:
     exec_plan = dict(exec_plan or {})
     exec_instruct = exec_plan["exec_inst"] 
@@ -643,24 +720,22 @@ async def run_executor_agent(supabase,
             exec_instruct = strip_emails(exec_instruct) + f"\n\n### LISTE DES CONTACTS INTERNES ###\n\nVoici la liste des contacts privés dans votre entreprise. Ne l'utilisez que si vous en avez besoin, comme contacter un responsable ou envoyer un email par exemple. Choisissez bien convenablement la bonne personne en fonction de son poste et de sa description de poste. Attention, le rôle peut ne pas correspondre exactement à ce que vous cherchez. Se référer plutôt à la descritption du poste pour le choix de la meilleure personne : \n\n<list_contact>\n"+ str(list_contact) +"\n</list_contact>\n\n"
         else :
             denied_answer = f"Je suis désolé, je me rends compte que je ne suis pas autorisé à envoyer l'email au destinataire : {', '.join(intru for intru in list_intrus)}."
-            await save_supabase_message(supabase, session_id, "assistant", denied_answer)
-            return denied_answer
-    print(f"\n[DEBUG] Executor instructions débutées dans app_utils.py: \n{exec_instruct}\n")
+            if user_language.lower() in ["malagasy", "malgache", "mg"]:
+                target_denied_answer = f"Miala tsiny tompoko, tsy manana alàlana handefa mailaka amin'ity na ireto aho: {', '.join(intru for intru in list_intrus)}."
+            else:
+                target_denied_answer = denied_answer
+            await save_supabase_message(supabase, session_id, "assistant", denied_answer, target_denied_answer, user_language)
+            return target_denied_answer
+
     out = await onexia_executor(exec_instruct)
-    print(f"\n[DEBUG] Executor instructions terminées dans app_utils.py: \n{out}\n")
     try :
-        try:
-            out = json.loads(out) 
-        except:
-            pass
-        print(f"\n[DEBUG] json.load( )  utilisé: \n{type(out)}\n")
+        out = json.loads(out) 
         return_reponse = out['message'] + out['ask'] if  out['ask'].lower() not in ["null", "none",""] else out['message']
-        print(f"\n[DEBUG] return_reponse dans app_utils.py: \n{return_reponse}\n")
+        target_return_reponse = return_reponse if user_language.lower() not in ["malagasy", "malgache", "mg"] else await sanitize_translate(return_reponse, "fr", "mg")
         if session_id:
-            await save_supabase_message(supabase, session_id, "assistant", return_reponse)
-        return return_reponse
+            await save_supabase_message(supabase, session_id, "assistant", return_reponse, target_return_reponse, user_language) # save assistant message
+        return target_return_reponse
     except Exception as e:
-        print(f"\n[DEBUG] Exception dans app_utils.py: \n{e}\n")
         return "Je suis désolé, j'ai subi une petite déconnexion. Pourriez-vous répéter svp ?"
 
 
@@ -729,27 +804,44 @@ async def load_intern_contact(sp: AsyncClient, company_id: str) -> List[Dict[str
                   .execute()
     return res.data or []
 
-async def safe_write_augmented_file(file: UploadFile, destination: Path):
+async def safe_write_augmented_file(filename: str,
+                                    filecontent: str,
+                                    destination: Path,
+                                    augment_rag: bool) -> None:
+    """Reads an uploaded file, optionally augments its text via AugmentRAG, and saves it to destination."""
+    ext = (Path(filename).suffix or "").lower()
+    if ext not in {".pdf", ".docx"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported file extension: {ext}")
 
-    ext = Path(file.filename).suffix.lower()
-    content = await file.read()  # read entire file into memory
+    if not filecontent:
+        raise HTTPException(status_code=422, detail="File empty or unreadable")
 
     if ext == ".pdf":
-        original_text = "".join(page.extract_text() or "" for page in PdfReader(BytesIO(content)).pages)
-    elif ext == ".docx":
-        original_text = "\n".join(p.text for p in docx.Document(BytesIO(content)).paragraphs)
-    else:
-        raise HTTPException(status_code=400, detail=f"Unsupported file extension: {ext}")
+        try:
+            reader = PdfReader(BytesIO(filecontent))
+            original_text = "".join(page.extract_text() or "" for page in reader.pages)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail="Invalid or unreadable PDF") from exc
+    else:  # .docx
+        try:
+            document = docx.Document(BytesIO(filecontent))
+            original_text = "\n".join(p.text for p in document.paragraphs)
+        except BadZipFile as exc:
+            raise HTTPException(status_code=422, detail="Invalid or unreadable DOCX") from exc
 
     if not original_text.strip():
         raise HTTPException(status_code=422, detail="File empty or unreadable")
-    
-    try:
-        augmented_text = await rewrite_rag_augmentor(original_text)
-    except :
-        augmented_text = original_text
+
+    if augment_rag:
+        try:
+            final_text = await rewrite_rag_augmentor(original_text)
+        except Exception:
+            final_text = original_text
+    else:
+        final_text = original_text
 
     if ext == ".pdf":
-        save_to_pdf(augmented_text, destination)
-    else:
-        save_to_docx(augmented_text, destination)
+        save_to_pdf(final_text, destination)
+    else:  # .docx
+        save_to_docx(final_text, destination)
+

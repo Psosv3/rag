@@ -8,7 +8,8 @@ from typing import Optional
 from .config import LLMConfig
 from .exceptions import LLMError
 
-from langfuse.openai import OpenAI
+# from langfuse.openai import OpenAI
+from groq import Groq
 
 import os
 from dotenv import load_dotenv
@@ -54,7 +55,7 @@ class OpenAILLMClient(LLMClient):
     def __init__(self, config: LLMConfig, api_key: Optional[str] = None) -> None:
         self._config = config
         self._api_key = api_key
-        self._client = OpenAI(api_key=groq_api_key, base_url="https://api.groq.com/openai/v1")
+        self._client = Groq(api_key=groq_api_key)
 
     def generate(self, prompt: str, *, system_prompt: Optional[str] = None, temperature: Optional[float] = None, max_tokens: Optional[int] = None,) -> str:
         from openai import APIError  # type: ignore[import]

@@ -1,6 +1,7 @@
 import os
 from PyPDF2 import PdfReader
 import docx
+import base64
 import re, unicodedata
 from dotenv import load_dotenv
 from typing import List, Dict, Set
@@ -17,7 +18,9 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from .google_translator import translate
 from .utils_langue import dict_remplacement_mg, dict_abreviation_mg, STOPWORDS_FR
-#---------------------------------
+from excel_ai_assistant import AppConfig, ExcelQASystem
+
+################################### Global vars ######################################
 
 # Load environment variables
 load_dotenv()
@@ -136,15 +139,31 @@ def read_docx(file_path):
         print(f"Erreur lors de la lecture du DOCX {file_path}: {str(e)}")
         return ""
 
+def process_excel_file(excel_path) -> None:
+    # Configure app (you can customize model, sampling, etc.)
+    config = AppConfig()
+    qa_system = ExcelQASystem.with_openai(config=config)
+    question = (
+"Tu es expert en lecture et compréhension de contenu Excel."
+"Fournis une synthèse détaillée des données contenues dans ce fichier Excel."
+"N'omet aucun élément. Interdit de faire des suppositions ou d'inventer des informations."
+"Ne donne jamais ton avis."
+"Réponds toujours en Français."
+    )
+    excel_content = qa_system.answer_question(source=excel_path, question=question)
+    return str(excel_content)
+
 def load_documents(data_dir):
     """Loads all PDF and DOCX documents from a directory."""
     docs = []
     for fname in os.listdir(data_dir):
         fpath = os.path.join(data_dir, fname)
-        if fname.endswith(".pdf"):
+        if fname.endswith(".pdf") and fname.startswith("gzel8!a3_"): #TODO: enlever ce prefix temporaire gzel8!a3_ et le gérer proprement
             docs.append(read_pdf(fpath))
-        elif fname.endswith(".docx"):
+        elif fname.endswith(".docx") and fname.startswith("gzel8!a3_"): #TODO: enlever ce prefix temporaire gzel8!a3_ et le gérer proprement
             docs.append(read_docx(fpath))
+        elif (fname.endswith(".xlsx") or fname.endswith(".xls")):
+            docs.append(process_excel_file(fpath))
 
     return docs
 
@@ -288,3 +307,8 @@ def _tokens(s: str) -> Set[str]:
 def _lexical_hit(text: str, q_tokens: Set[str]) -> int:
     # nombre de tokens en commun (sert de petit boost)
     return len(_tokens(text) & q_tokens)
+
+# Function to encode the image
+def encode_image(image_path):
+  with open(image_path, "rb") as image_file:
+    return base64.b64encode(image_file.read()).decode('utf-8')

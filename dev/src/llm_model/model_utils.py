@@ -14,7 +14,7 @@ class PlannerOutput(BaseModel):
     action_type: Literal["answer","tool","reject","clarify","escalate"]
     tools_to_call: List[ToolCall] = Field(default_factory=list)
     continue_discussion: bool = True
-    citations_required: bool = False
+    explain_stop_discussion: str = ""
     exec_required: bool = False
     exec_inst: str = ""
     user_visible_answer: str = ""
@@ -71,7 +71,7 @@ def fallback_completion():
                 action_type="answer",
                 tools_to_call=[],
                 continue_discussion=True,
-                citations_required=False,
+                explain_stop_discussion="",
                 exec_required=False,
                 exec_inst="",
                 user_visible_answer="Désolé, il semble que j'ai perdu ma connexion. Pourriez-vous répéter svp ?"

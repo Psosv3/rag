@@ -1,8 +1,8 @@
 
 from agents import OpenAIChatCompletionsModel
 from agents import AsyncOpenAI as AgentsAsyncOpenAI 
-# from openai import AsyncOpenAI
-from langfuse.openai import AsyncOpenAI
+from groq import AsyncGroq
+from openai import AsyncOpenAI
 from agents.mcp  import MCPServerSse, MCPServerStreamableHttp
 from mistralai import Mistral
 import os
@@ -24,15 +24,19 @@ client_mistral = Mistral(api_key=mistral_api_key)
 mistral_llm = "mistral-small-latest"
 
 ###
-planner_model = AsyncOpenAI(api_key=groq_api_key, base_url="https://api.groq.com/openai/v1")
+planner_model = AsyncGroq(api_key=groq_api_key)
 planner_core_model = "openai/gpt-oss-120b"
 
 planner_model_backup = AsyncOpenAI(api_key=baseten_api_key, base_url="https://inference.baseten.co/v1")
 
 ###
+image_model = AsyncGroq(api_key=groq_api_key)
+image_core_model = "meta-llama/llama-4-maverick-17b-128e-instruct" #"meta-llama/llama-4-scout-17b-16e-instruct"
+
+###
 executor_model = OpenAIChatCompletionsModel( 
-    model = "openai/gpt-oss-120b",
-    openai_client = AsyncOpenAI(base_url="https://inference.baseten.co/v1", api_key=baseten_api_key),#(base_url="https://api.groq.com/openai/v1", api_key=groq_api_key),
+    model = "openai/gpt-oss-20b",
+    openai_client = AgentsAsyncOpenAI (base_url="https://api.groq.com/openai/v1", api_key=groq_api_key),
 )
 
 ###

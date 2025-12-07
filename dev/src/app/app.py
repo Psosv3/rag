@@ -1,30 +1,27 @@
 # main app.py
 import os
 import json
-import uuid
 import random
 import mimetypes
-import hashlib
 import contextlib
 from pathlib import Path
-from typing import Optional, List, AsyncGenerator, Annotated
+from typing import Optional, AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime
 import asyncio
+from docx import Document
 from dotenv import load_dotenv
 # FastAPI
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Request, status, Security
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Request, Form
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-# Pydantic
-from pydantic import BaseModel, AnyHttpUrl
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from fastapi.responses import StreamingResponse
 # DataBase
-from redis.asyncio import Redis, ConnectionPool
+from redis.asyncio import Redis
 from supabase import create_async_client, AsyncClient
 # Utilities
 from utils.utils import developper_message, safety_post_filter, controlled_fallback_response, sanitize_translate, translate, check_contact_and_name, dict_abreviation_mg
+from excel_ai_assistant.save_file import generate_excel_path, _save_upload_file_streaming, _delete_saved_excel, UPLOAD_ROOT,MAX_UPLOAD_BYTES, CHUNK_SIZE, ALLOWED_EXCEL_TYPES
 from .app_utils import (
     # Constant
     TABLE_SESSION,
@@ -42,8 +39,6 @@ from .app_utils import (
     # Functions
     refresh_companies_into_state,
     get_current_user,
-    sanitize_filename,
-    safe_write_file,
     get_supabase,
     get_redis,
     get_or_create_session,
@@ -58,7 +53,7 @@ from .app_utils import (
     log_audit,
     sse_data,
     run_executor_agent,
-    validate_question,
+    validate_quest_length,
     escalate_to_humans,
     add_escalate_session,
     remove_escalate_session,
@@ -71,9 +66,10 @@ from .app_utils import (
     get_company_chatbot_signature,
     build_chat_messages,
     stop_chatbot,
+    process_file,
     )
 # rag & models
-from rag.rag import get_rag_context, rebuild_company_index, build_index, get_company_data_dir, get_company_stats, clear_company_cache
+from rag.rag import get_rag_context, rebuild_company_index, build_index, get_company_data_dir, get_company_stats, clear_company_cache, rewrite_rag_augmentor
 from llm_model.onexia import onexia_planner, onexia_executor, PlannerOutput, planner_syst_instructions
 
 load_dotenv()
@@ -136,7 +132,7 @@ async def upload_file(file: UploadFile = File(...),
     ext = Path(file.filename).suffix.lower()
 
     if ext not in settings.ALLOWED_UPLOAD_EXTS:
-        raise HTTPException(status_code=400, detail="Seuls les fichiers PDF et DOCX sont acceptés.")
+        raise HTTPException(status_code=400, detail="Seuls les fichiers PDF, DOCX, XLSX et CSV sont acceptés.")
     
     mime_guess, _ = mimetypes.guess_type(file.filename)
     mime_hint = (mime_guess or file.content_type or "").lower()
@@ -145,6 +141,10 @@ async def upload_file(file: UploadFile = File(...),
         raise HTTPException(status_code=400, detail="MIME type mismatch for PDF")
     if ext == ".docx" and ("word" not in mime_hint and "officedocument" not in mime_hint):
         raise HTTPException(status_code=400, detail="MIME type mismatch for DOCX")
+    if ext == ".xlsx" and ("spreadsheetml" not in mime_hint and "officedocument" not in mime_hint):
+        raise HTTPException(status_code=400, detail="MIME type mismatch for XLSX")
+    if ext == ".csv" and "csv" not in mime_hint:
+        raise HTTPException(status_code=400, detail="MIME type mismatch for CSV")
 
     company_id = current_user.company_id
     company_dir = DATA_DIR / ("company_"+company_id)
@@ -152,20 +152,32 @@ async def upload_file(file: UploadFile = File(...),
 
     safe_name = file.filename # TODO : sanitize_filename(file.filename) 
     destination = company_dir / safe_name
+    augm_dest = company_dir / ("gzel8!a3_" + safe_name)
 
-    if augment_rag:
-        try:
-            await safe_write_augmented_file(file, destination)
-        except:
-            await safe_write_file(destination, file, settings.MAX_UPLOAD_MB * 1024 * 1024)
+    if ext in (".pdf", ".docx") :
+        content = await file.read()
+        await safe_write_augmented_file(file.filename, content, destination, False)
+        if augment_rag:
+            try:
+                await safe_write_augmented_file(file.filename, content, augm_dest, True)
+            except:
+                await safe_write_augmented_file(file.filename, content, augm_dest, False)
     else :
-        await safe_write_file(destination, file, settings.MAX_UPLOAD_MB * 1024 * 1024)
+        try:
+            # TODO: destination = generate_excel_path(file.content_type, ALLOWED_EXCEL_TYPES)
+            await run_in_threadpool(_save_upload_file_streaming,
+                                    file,
+                                    destination,
+                                    MAX_UPLOAD_BYTES,
+                                    )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erreur lors de l'enregistrement du fichier Excel/CSV: {str(e)}")
 
-    return {
-        "message": f"file {safe_name} uploaded",
-        "company_id": company_id,
-        "file": safe_name,
-    }
+
+    return {"message": f"file {safe_name} uploaded",
+            "company_id": company_id,
+            "file": safe_name
+            }
 
 
 @app.post("/build_index/")
@@ -187,11 +199,25 @@ async def express_build_index(current_user: AuthUser = Depends(get_current_user)
 
 @app.post("/ask_public/")
 async def ask_question_public(req: Request,
-                              request: PublicQuestionRequest,
-                              #file: Optional[UploadFile] = File(None),
+                              question: str = Form(...),
+                              company_id: str = Form(...),
+                              session_id: Optional[str] = Form(None),
+                              external_user_id: Optional[str] = Form(None),
+                              langue: str = Form('français'),
+                              messenger: Optional[str] = Form(None),
+                              file: Optional[UploadFile] = File(None),
                               spbase: AsyncClient = Depends(get_supabase),
                               redis: Redis = Depends(get_redis),
                               ):
+    # Reconstruire l'objet request pour garder le code existant
+    request = PublicQuestionRequest(question=question,
+                                    company_id=company_id,
+                                    session_id=session_id,
+                                    external_user_id=external_user_id,
+                                    langue=langue,
+                                    messenger=messenger,
+                                    file=file,
+                                    )
 
     # 0) Resolve/create session
     session = await get_or_create_session(spbase, redis, request.company_id, request.external_user_id, request.messenger)
@@ -200,16 +226,19 @@ async def ask_question_public(req: Request,
     session_id = session["session_id"]
 
     # 1) a) validate question length
-    reject_question, user_question = validate_question(request.question) # check length abuse
-    if reject_question : 
+    is_rejected, original_question = validate_quest_length(request.question) # check length abuse
+    if is_rejected : 
         return sse_data({"answer": "Owh! Vous êtes bien bavard. Je suis désolé, je ne peux accepter que les questions à 1000 caractères maximum.",
                         "company_id": request.company_id,
                         "session_id": session_id,
                         "external_user_id": request.external_user_id,
                         })        
     # 1) b) sanitize_malagasy_sentence, dict_abreviation_mg
-    if request.langue.lower() in ("malgache", "malagasy","mg"):
-        user_question = await sanitize_translate(user_question.lower(), dict_abreviation_mg, "mg", "fr")
+    user_language = request.langue.lower() if request.langue else None
+    if user_language in ("malgache", "malagasy","mg"):
+        user_text_question = await sanitize_translate(original_question.lower(), "mg", "fr")
+    else:
+        user_text_question = original_question
 
     # 2) event_stream
     async def event_stream() -> AsyncGenerator[str, None]:
@@ -229,25 +258,70 @@ async def ask_question_public(req: Request,
                 })
                 return
             
-            # 1) Persist user message & load conv history
-            await save_supabase_message(spbase, session_id, "user", user_question)
+            # 1) process text and file, persist message, create notifications and escalate check
+            # 1) a) process uploaded file (.png ou .jpg) if any 
+            if request.file :
+                if request.file.content_type not in settings.ALLOWED_FILES_TYPES:
+                    raise HTTPException(status_code=400 ,detail="Seuls les fichiers images PNG, JPG et WEBP sont acceptés.")
+                try:
+                    content_file = await process_file(request.file, settings.MAX_UPLOAD_MB, settings.ALLOWED_FILES_TYPES)
+                    user_question = f"L'utilisateur a envoyé un fichier externe {request.file.content_type}. Voici ce qu'il contient:\n\n<CONTENU_IMAGE> :\n{content_file}\n</CONTENU_IMAGE>. \n\nVoici le message de l'utilisateur : \n{user_text_question}"
+                except Exception as e:
+                    print(f"***** ERREUR process_file: {e}")
+                    await save_supabase_message(spbase, session_id, "user", user_text_question, original_question, user_language)
+                    error_file_answer = f"Oups.. je n'ai pas pu traiter le fichier que vous avez envoyé. Pouvez-vous vous assurer qu'il est bien valide ({settings.MAX_UPLOAD_MB} Mo max) et de me le renvoyer svp ? Merci! :)"
+                    yield sse_data({
+                        "answer": error_file_answer,
+                        "company_id": request.company_id,
+                        "session_id": session_id,
+                        "external_user_id": request.external_user_id,
+                    })
+                    return
+            else:
+                user_question = user_text_question
+ 
+            # 1) b) Persist user message & load conv history
+            await save_supabase_message(spbase,
+                                        session_id,
+                                        "user",
+                                        user_question,
+                                        original_question,
+                                        user_language,
+                                        )
             conv_history = await list_messages(spbase, session_id)
 
-            # 1) Prioritize escalate-ready case
+            # 1) c) Créer une notification pour chaque nouveau message
+            await create_notification(
+                spbase=spbase,
+                company_id=request.company_id,
+                notification_type="new_message",
+                title="Nouveau message reçu",
+                content=f"Un utilisateur a envoyé un message : {user_question[:100]}{'...' if len(user_question) > 100 else ''}",
+                session_id=session_id,
+                priority="normal",
+                metadata={
+                    "external_user_id": request.external_user_id,
+                    "messenger": request.messenger,
+                    "message_time": datetime.now().isoformat(),
+                    "question_length": len(user_question)
+                },
+                action_url=f"/dashboard/chat?session={session_id}",
+                action_label="Voir la conversation"
+            )
+
+            # 1) d) Prioritize escalate-ready case
             if await is_ready_to_escalate(redis, request.company_id, session_id):
                 go = check_contact_and_name(user_question)
                 if go == "OK":
                     await remove_escalate_session(redis, request.company_id, session_id)
-
                     await escalate_to_humans(conv_history, spbase, session_id, request)
-
                     # Créer une notification pour le dashboard
                     await create_notification(
                         spbase=spbase,
                         company_id=request.company_id,
                         notification_type="manual_response_required",
                         title="Intervention manuelle requise",
-                        content=f"Une conversation a été escaladée et nécessite une réponse manuelle. Dernier message: {user_question[:100]}...",
+                        content=f"Une conversation nécessite une réponse manuelle. Dernier message: {user_question[:100]}...",
                         session_id=session_id,
                         priority="high",
                         metadata={
@@ -258,13 +332,14 @@ async def ask_question_public(req: Request,
                         action_url=f"/dashboard/chat?session={session_id}",
                         action_label="Répondre maintenant"
                     )
-
                     answer_escalate = "C'est bon! Mon responsable a été informé. Il reviendra vers vous au plus vite."
-                    message_data = await save_supabase_message(spbase, session_id, "assistant", answer_escalate, manual_response=True)
                     if request.langue.lower() in ("malgache", "malagasy","mg") :
-                        answer_escalate = "Misaotra tompoko. Efa lasa any amin'ny tompon'andraikitra ny hafatrao. Hifandray aminao arak'izay haingana izy."
+                        target_answer_escalate = "Misaotra tompoko. Efa lasa any amin'ny tompon'andraikitra ny hafatrao. Hifandray aminao arak'izay haingana izy."
+                    else:
+                        target_answer_escalate = answer_escalate
+                    message_data = await save_supabase_message(spbase, session_id, "assistant", answer_escalate, target_answer_escalate, request.langue, manual_response=True)
                     escalate_payload = {
-                        "answer": answer_escalate,
+                        "answer": target_answer_escalate,
                         "company_id": request.company_id,
                         "session_id": session_id,
                         "external_user_id": request.external_user_id,
@@ -274,11 +349,14 @@ async def ask_question_public(req: Request,
                     return
                 else:
                     clarif = "J'aurais besoin de vos coordonnées (email ou téléphone) svp pour que notre équipe puisse vous recontacter. Pourriez-vous me redonner ensemble vos coordonnées et votre nom complet svp ? Merci !" if go == "missing_contact" else "Il me faudrait aussi votre nom complet svp. Pourriez-vous me redonner ensemble vos coordonnées et votre nom complet svp ? Merci !"
-                    message_data = await save_supabase_message(spbase, session_id, "assistant", clarif)
+                    
                     if request.langue.lower() in ("malgache", "malagasy","mg"):
-                        clarif = "Azafady indrindra, mba mila ny anaranao feno sy ny adiresy mailaka na ny telefaoninao izahay azafady afahanay miverina miantso anao. Mba azonao alefa amiko miaraka ve ireo ? Misaotra tompoko."
+                        target_clarif = "Azafady indrindra, mba mila ny anaranao feno sy ny adiresy mailaka na ny telefaoninao izahay azafady afahanay miverina miantso anao. Mba azonao alefa amiko miaraka ve ireo ? Misaotra tompoko."
+                    else:
+                        target_clarif = clarif
+                    message_data = await save_supabase_message(spbase, session_id, "assistant", clarif, target_clarif, request.langue)
                     payload = {
-                        "answer": clarif,
+                        "answer": target_clarif,
                         "company_id": request.company_id,
                         "session_id": session_id,
                         "external_user_id": request.external_user_id,
@@ -300,13 +378,12 @@ async def ask_question_public(req: Request,
             company_name, company_resume, company_extra_prompt, company_signature = await get_company_name_resume_prompt_signature(app, request.company_id)
             syst_msg = planner_syst_instructions
             dev_msg = developper_message(company_name, company_resume, company_extra_prompt)
-            msgs = build_chat_messages(
-                messages_history=conv_history,
-                user_input=user_question,
-                context=docs,
-                system_message=syst_msg,
-                dev_message=dev_msg,
-            )
+            msgs = build_chat_messages(messages_history=conv_history,
+                                       user_input=user_question,
+                                       context=docs,
+                                       system_message=syst_msg,
+                                       dev_message=dev_msg)
+            print(f"*****DEBUG dans app.py -- contexte : {docs}\n\n")
             # 4) Planner
             planner_out: PlannerOutput = await onexia_planner(msgs)
 
@@ -314,13 +391,14 @@ async def ask_question_public(req: Request,
                 await forbiden_session(redis, request.company_id, session_id)
                 answer_mg = "Tena miala tsiny indrindra tompoko, voatery aho hamarana ny resantsika eto. Mankasitraka indrindra dia mirary soa."
                 answer_fr = "Je suis vraiment désolé, je dois vous laisser ici pour aujourd'hui, en vous remerciant chaleureusement. Prenez bien soin de vous et à bientôt! :)"
+                answer = answer_mg if request.langue.lower() == "malgache" else answer_fr
                 payload = {
-                    "answer": answer_mg if request.langue.lower() == "malgache" else answer_fr,
+                    "answer": answer,
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
                 }
-                message_data = await save_supabase_message(spbase, session_id, "assistant", answer_fr)
+                message_data = await save_supabase_message(spbase, session_id, "assistant", answer)
                 await log_audit(redis, {"type": "planner_block", "session_id": session_id, "company_id": request.company_id})
                 payload["message_id"] = message_data.get("message_id")
                 yield sse_data(payload)
@@ -330,18 +408,24 @@ async def ask_question_public(req: Request,
             async def respond_and_log(text: str, langue : str, signature: str) -> dict: # Helper to log assistant text + add final signature
                 text += f"\n\n{signature}" if signature else ""
                 safe_answer = safety_post_filter(text)
-                message_data = await save_supabase_message(spbase, session_id, "assistant", safe_answer)
                 if langue.lower() in ("malgache", "malagasy","mg"):
-                    safe_answer = await translate(safe_answer, "fr", "mg")
-                    safe_answer = safe_answer[0]
+                    target_safe_answer = await sanitize_translate(safe_answer, "fr", "mg")
+                else:
+                    target_safe_answer = safe_answer
+                message_data = await save_supabase_message(spbase,
+                                                           session_id,
+                                                           "assistant",
+                                                           safe_answer,
+                                                           target_safe_answer,
+                                                           langue)
                 return {
-                    "answer": safe_answer,
-                    "company_id": request.company_id,
-                    "session_id": session_id,
-                    "external_user_id": request.external_user_id,
-                    "message_id": message_data.get("message_id"),
-                    "signature": signature
-                    }
+                        "answer": target_safe_answer,
+                        "company_id": request.company_id,
+                        "session_id": session_id,
+                        "external_user_id": request.external_user_id,
+                        "message_id": message_data.get("message_id"),
+                        "signature": signature
+                        }
 
             if planner_out.action_type == "reject":
                 reject = planner_out.user_visible_answer or "Désolé, je ne suis pas en mesure de vous aider sur ce point."
@@ -367,11 +451,13 @@ async def ask_question_public(req: Request,
             if planner_out.action_type == "escalate":
                 await add_escalate_session(redis, request.company_id, session_id)
                 prep_escalate_resp = random.choice(LIST_ESCALATE_RESP)
-                message_data = await save_supabase_message(spbase, session_id, "assistant", prep_escalate_resp)
                 if request.langue.lower() in ("malgache", "malagasy","mg"):
-                    prep_escalate_resp = "Ho hampiresahiko amin'ny tompon'andraikitra ianao fa mba azonao alefa amiko miaraka ve ny anaranao sy ny laharan-telefaoninao na ny adiresy mailaka ? Ilainay ireo afahan'ilay tompon'andraikitra miverina miantso anao. Misaotra tompoko."
+                    target_prep_resp = "Ho hampiresahiko amin'ny tompon'andraikitra ianao fa mba azonao alefa amiko miaraka ve ny anaranao sy ny laharan-telefaoninao na ny adiresy mailaka ? Ilainay ireo afahan'ilay tompon'andraikitra miverina miantso anao. Misaotra tompoko."
+                else:
+                    target_prep_resp = prep_escalate_resp   
+                message_data = await save_supabase_message(spbase, session_id, "assistant", prep_escalate_resp, target_prep_resp, request.langue)
                 ack_payload = {
-                    "answer": prep_escalate_resp,
+                    "answer": target_prep_resp,
                     "company_id": request.company_id,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
@@ -384,18 +470,10 @@ async def ask_question_public(req: Request,
             if planner_out.action_type == "tool":
 
                 temp_resp = random.choice(LIST_TEMP_RESP)
-                message_data = await save_supabase_message(spbase, session_id, "assistant", temp_resp)
-                ack_payload = {
-                    "answer": temp_resp,
-                    "company_id": request.company_id,
-                    "session_id": session_id,
-                    "external_user_id": request.external_user_id,
-                    "message_id": message_data.get("message_id")
-                }
-                yield sse_data(ack_payload)
+                yield sse_data(await respond_and_log(temp_resp, request.langue, company_signature))
 
                 async def _run_executor():
-                    return await run_executor_agent(spbase, session_id, request.company_id, planner_out)
+                    return await run_executor_agent(spbase, session_id, request.company_id, planner_out, user_language)
 
                 task = asyncio.create_task(_run_executor())
 
@@ -415,11 +493,15 @@ async def ask_question_public(req: Request,
                     result = await asyncio.wait_for(task, timeout=None)
                     final_text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
                     
-                    safe_final = safety_post_filter(final_text)
-                    message_data = await save_supabase_message(spbase, session_id, "assistant", safe_final)
+                    safe_final = safety_post_filter(final_text) or "C'est fait ! Merci pour votre attente."
+                    if request.langue.lower() in ("malgache", "malagasy","mg"):
+                        target_safe_final = "Vita soa tompoko! Misaotra indrindra tamin'ny faharetanao."
+                    else:
+                        target_safe_final = safe_final
+                    message_data = await save_supabase_message(spbase, session_id, "assistant", safe_final, target_safe_final, request.langue)
                     
                     final_payload = {
-                        "answer": safe_final or "C'est fait ! Merci pour votre attente.",
+                        "answer": target_safe_final,
                         "company_id": request.company_id,
                         "session_id": session_id,
                         "external_user_id": request.external_user_id,
@@ -541,8 +623,6 @@ async def get_document_content(
 ):
     """Récupère le contenu textuel d'un fichier DOCX"""
     try:
-        from docx import Document
-        
         company_id = current_user.company_id or "default-company"
         company_data_dir = get_company_data_dir(company_id, DATA_DIR)
         file_path = os.path.join(company_data_dir, filename)
@@ -579,23 +659,16 @@ async def get_document_content(
 
 
 @app.put("/documents/{filename}/content")
-async def update_document_content(
-    filename: str,
-    content: dict,
-    background_tasks: BackgroundTasks,
-    current_user: AuthUser = Depends(get_current_user),
-    redis: Redis = Depends(get_redis),
-):
+async def update_document_content(filename: str,
+                                  content: dict,
+                                  background_tasks: BackgroundTasks,
+                                  current_user: AuthUser = Depends(get_current_user),
+                                  redis: Redis = Depends(get_redis),
+                                  ):
     """Met à jour le contenu d'un fichier DOCX"""
-    try:
-        from docx import Document
-        
-        company_id = current_user.company_id or "default-company"
+    try:        
+        company_id = current_user.company_id
         company_data_dir = get_company_data_dir(company_id, DATA_DIR)
-        file_path = os.path.join(company_data_dir, filename)
-
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail=f"Fichier {filename} non trouvé")
 
         if not filename.lower().endswith('.docx'):
             raise HTTPException(status_code=400, detail="Seuls les fichiers DOCX peuvent être modifiés")
@@ -603,19 +676,29 @@ async def update_document_content(
         new_content = content.get("content", "")
         if not new_content:
             raise HTTPException(status_code=400, detail="Le contenu ne peut pas être vide")
+        new_augmented_content = await rewrite_rag_augmentor(new_content)
 
         # Créer un nouveau document avec le contenu mis à jour
-        doc = Document()
-        for line in new_content.split("\n"):
-            doc.add_paragraph(line)
-        
-        # Sauvegarder le fichier
-        doc.save(file_path)
+        try:
+            for _content, _name in [(new_content, filename), (new_augmented_content, "gzel8!a3_"+filename)]:
+                file_path = os.path.join(company_data_dir, _name)
+                if not os.path.exists(file_path):
+                    continue # evite de de buguer si le doc n existe pas deja et passe au suivant
+                doc = Document()
+                for line in _content.split("\n"):
+                    doc.add_paragraph(line)
+                doc.save(file_path) # Sauvegarder le fichier
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erreur lors de la création du double-document: {str(e)}")
         
         # Vider le cache et reconstruire l'index en arrière-plan
-        clear_company_cache(company_id, VECTORSTORES_CACHE) # Clear in-memory cache
-        await clear_all_cached_rag_docs(redis, company_id)
-        background_tasks.add_task(rebuild_company_index, company_id, DATA_DIR, HTTPException)
+        try:
+            clear_company_cache(company_id, VECTORSTORES_CACHE) # Clear in-memory cache
+            await clear_all_cached_rag_docs(redis, company_id)
+            background_tasks.add_task(rebuild_company_index, company_id, DATA_DIR, HTTPException)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erreur lors de la mise à jour de l'index en arrière-plan: {str(e)}")
+
         
         return {
             "message": f"Document {filename} mis à jour avec succès",
@@ -677,11 +760,16 @@ async def download_document(
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail=f"Fichier {filename} non trouvé")
 
-        if not filename.lower().endswith(('.pdf', '.docx')):
-            raise HTTPException(status_code=400, detail="Seuls les fichiers PDF et DOCX peuvent être téléchargés")
+        if not filename.lower().endswith(('.pdf', '.docx', '.xlsx', '.xls')):
+            raise HTTPException(status_code=400, detail="Seuls les fichiers PDF, DOCX et XLSX peuvent être téléchargés")
 
         # Déterminer le MIME type
-        mime_type = "application/pdf" if filename.lower().endswith('.pdf') else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        if filename.lower().endswith('.pdf'):
+            mime_type = "application/pdf"
+        elif filename.lower().endswith('.docx'):
+            mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif filename.lower().endswith(('.xlsx', '.xls')):
+            mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
         # Streamer le fichier
         def iterfile():
@@ -721,15 +809,16 @@ async def delete_document(
         await clear_all_cached_rag_docs(redis, company_id)  # Clear Redis cache
 
         company_data_dir = get_company_data_dir(company_id, DATA_DIR)
-        file_path = os.path.join(company_data_dir, filename)
 
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail=f"Fichier {filename} non trouvé")
+        for name in [filename, "gzel8!a3_" + filename]:
+            try:
+                file_path = os.path.join(company_data_dir, name)
+                if not os.path.exists(file_path):
+                    raise HTTPException(status_code=404, detail=f"Fichier non trouvé")
+                os.remove(file_path)
+            except:
+                continue  # Try next name
 
-        if not filename.lower().endswith(('.pdf', '.docx')):
-            raise HTTPException(status_code=400, detail="Seuls les fichiers PDF et DOCX peuvent être supprimés")
-
-        os.remove(file_path)
         if os.listdir(company_data_dir):
             background_tasks.add_task(rebuild_company_index, company_id, DATA_DIR, HTTPException)
         
