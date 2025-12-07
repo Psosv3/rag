@@ -38,7 +38,7 @@ langchain<0.2
 langchain-community
 langchain-openai
 langchain-mistralai
-
+openpyxl
 
 # dev environment: 
 langfuse 

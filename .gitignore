@@ -50,3 +50,4 @@ data/
 secret_key/
 dev/src/instructions/.old/
 dev/src/llm_model/model_server.py
+dev/notebooks/
