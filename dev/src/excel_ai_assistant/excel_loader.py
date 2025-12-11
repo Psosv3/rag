@@ -32,14 +32,12 @@ class ExcelWorkbookLoader:
         self,
         source: Union[str, Path, bytes],
         file_id: Optional[str] = None,
-        max_sample_rows_per_sheet: int = 5,
     ) -> WorkbookSummary:
         """
         Load an Excel file and build a WorkbookSummary.
 
         :param source: Path to .xlsx file or raw bytes.
         :param file_id: Logical identifier for the file (e.g., UUID). If None, uses path or "in-memory".
-        :param max_sample_rows_per_sheet: How many rows to sample per sheet for context.
         """
         try:
             if isinstance(source, (str, Path)):
@@ -50,16 +48,13 @@ class ExcelWorkbookLoader:
             else:
                 from io import BytesIO
 
-                # Need two separate BytesIO instances
                 bytes_data = bytes(source)
                 formulas_wb = load_workbook(filename=BytesIO(bytes_data), data_only=False, read_only=False)
                 values_wb = load_workbook(filename=BytesIO(bytes_data), data_only=True, read_only=False)
                 logical_id = file_id or "in-memory-workbook"
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("Failed to load workbook")
             raise ExcelLoadError(f"Failed to load Excel workbook: {exc}") from exc
-
-        sheets: List[SheetSummary] = []
 
         try:
             formula_sheets_by_title: Dict[str, Worksheet] = {
@@ -68,9 +63,11 @@ class ExcelWorkbookLoader:
             value_sheets_by_title: Dict[str, Worksheet] = {
                 ws.title: ws for ws in values_wb.worksheets
             }
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("Failed to index worksheets by title")
             raise ExcelLoadError(f"Failed to index worksheets: {exc}") from exc
+
+        sheets: List[SheetSummary] = []
 
         for sheet_title, ws_formulas in formula_sheets_by_title.items():
             ws_values = value_sheets_by_title.get(sheet_title)
@@ -80,14 +77,14 @@ class ExcelWorkbookLoader:
                     sheet_title,
                 )
                 continue
+
             try:
                 sheet_summary = self._summarize_sheet(
                     ws_formulas=ws_formulas,
                     ws_values=ws_values,
-                    max_sample_rows=max_sample_rows_per_sheet,
                 )
                 sheets.append(sheet_summary)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception("Failed to summarize sheet %s", sheet_title)
                 raise ExcelLoadError(f"Failed to summarize sheet '{sheet_title}': {exc}") from exc
 
@@ -101,14 +98,18 @@ class ExcelWorkbookLoader:
         self,
         ws_formulas: Worksheet,
         ws_values: Worksheet,
-        max_sample_rows: int,
     ) -> SheetSummary:
         # Sizes should match between formula and value workbooks
         n_rows = ws_values.max_row or ws_formulas.max_row or 0
         n_cols = ws_values.max_column or ws_formulas.max_column or 0
 
-        headers = self._infer_headers(ws_values)
-        sample_rows = self._sample_rows(ws_values, headers=headers, max_rows=max_sample_rows)
+        headers, header_row_idx = self._infer_headers(ws_values)
+        # Sample rows starting from A1 (row 1, column 1) so that indices always
+        # correspond to the global Excel grid (Row = Excel row, ColumnN = Excel column N).
+        sample_rows = self._sample_rows_grid(
+            ws=ws_values,
+            max_rows=n_rows,
+        )
         formula_cells, cross_sheet_refs = self._collect_formulas(ws_formulas, ws_values)
         labeled_values = self._extract_labeled_values(ws_values)
 
@@ -127,19 +128,26 @@ class ExcelWorkbookLoader:
     # Header inference (using values workbook)
     # -------------------------------------------------------------------------
 
-    def _infer_headers(self, ws: Worksheet) -> List[str]:
+    def _infer_headers(self, ws: Worksheet) -> tuple[List[str], int]:
         """
         Heuristic: take the first non-empty row with at least 2 non-empty cells as header row.
+
+        Returns (headers, header_row_index). If no headers found, returns ([], 0).
 
         Uses values_only=True, so each row is a tuple of raw values (including formula results).
         """
         max_row = ws.max_row or 0
         if max_row == 0:
-            return []
+            return [], 0
 
         scan_max_row = min(max_row, 10)
+        header_row_idx = 0
+        headers: List[str] = []
 
-        for row in ws.iter_rows(min_row=1, max_row=scan_max_row, values_only=True):
+        for row_idx, row in enumerate(
+            ws.iter_rows(min_row=1, max_row=scan_max_row, values_only=True),
+            start=1,
+        ):
             values = list(row)
             if not values:
                 continue
@@ -149,52 +157,52 @@ class ExcelWorkbookLoader:
                 if v is not None and str(v).strip() != ""
             ]
             if len(non_empty) >= 2:
-                return [str(v) if v is not None else "" for v in values]
+                header_row_idx = row_idx
+                headers = [str(v) if v is not None else "" for v in values]
+                break
 
-        return []
+        return headers, header_row_idx
 
     # -------------------------------------------------------------------------
-    # Row sampling (using values workbook)
+    # Row sampling (grid-style, using Column1..ColumnN, starting at A1)
     # -------------------------------------------------------------------------
 
-    def _sample_rows(
+    def _sample_rows_grid(
         self,
         ws: Worksheet,
-        headers: List[str],
         max_rows: int,
     ) -> List[Dict[str, Any]]:
         """
-        Sample a few rows of data to provide context to the LLM.
+        Sample rows as a raw grid, starting from cell A1.
 
-        Uses values_only=True, so row is a tuple of values (numbers, dates, strings, etc.).
+        Keys are always Column1..ColumnN, where N is the sheet's max_column.
+
+        Row and column indices are therefore aligned with the Excel grid:
+        - Column1 corresponds to column A, Column2 to B, etc.
+        - The first dictionary in the list represents Excel row 1, the second row 2, etc.
         """
         if max_rows <= 0:
             return []
 
         max_row = ws.max_row or 0
-        if max_row == 0:
+        max_col = ws.max_column or 0
+        if max_row == 0 or max_col == 0:
             return []
 
-        header_row_idx = 1 if headers else 0
-        start_row = header_row_idx + 1 if headers else 1
-
-        if start_row > max_row:
-            return []
-
-        end_row = min(max_row, start_row + max_rows - 1)
+        start_row = 1
+        end_row = min(max_row, max_rows)
 
         samples: List[Dict[str, Any]] = []
         for row_values in ws.iter_rows(
             min_row=start_row,
             max_row=end_row,
+            min_col=1,
+            max_col=max_col,
             values_only=True,
         ):
             row_dict: Dict[str, Any] = {}
-            for idx, cell_value in enumerate(row_values):
-                if headers and idx < len(headers) and headers[idx]:
-                    col_name = headers[idx]
-                else:
-                    col_name = f"Column{idx + 1}"
+            for col_idx, cell_value in enumerate(row_values, start=1):
+                col_name = f"Column{col_idx}"
                 row_dict[col_name] = cell_value
             samples.append(row_dict)
 
@@ -256,7 +264,7 @@ class ExcelWorkbookLoader:
         """
         Detect label->value patterns, both horizontal and vertical, using the values workbook.
 
-        Examples (generic, not specific to revenue):
+        Examples (generic, not specific to any domain):
           B1: "Chiffre d'affaire année 1"  C1: 324654532
           A5: "Nombre d'employés"         B5: 45
           D10: "CPU usage (max)"          E10: 0.87

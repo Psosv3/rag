@@ -107,12 +107,12 @@ LIST_TEMP_RESP = [
 ]
 LIST_ESCALATE_RESP =[
     "D'accord. Je vais transférer votre demande à mon responsable. Mais avant, pourriez-vous me communiquer votre nom ainsi que vos coordonnées (adresse e-mail et/ou numéro de téléphone) ?",
-    "Très bien, je vais transférer votre demande à un responsable. Afin de la transférer dans les meilleures conditions, auriez-vous l’amabilité de me donner votre nom et vos coordonnées (adresse e-mail et/ou numéro de téléphone) ?",
+    "Très bien, je vais transférer votre demande à un responsable. Afin de la transférer dans les meilleures conditions, auriez-vous l'amabilité de me donner votre nom et vos coordonnées (adresse e-mail et/ou numéro de téléphone) ?",
     "Ok. Je vais transférer votre demande à mon responsable. Pour assurer un suivi efficace, puis-je avoir votre nom et vos coordonnées (adresse e-mail et/ou numéro de téléphone) ?",
     "D'accord. Je vais contacter mon responsable pour qu'il prenne votre cas en charge. Mais avant de passer le relais, puis-je avoir votre nom et vos coordonnées (adresse e-mail et/ou numéro de téléphone) ?",
-    "C'est noté. Je vais transférer votre demande à mon responsable. Pourriez-vous, s’il vous plaît, me partager votre nom et vos coordonnées (adresse e-mail et/ou numéro de téléphone) pour faciliter la suivie ?",
+    "C'est noté. Je vais transférer votre demande à mon responsable. Pourriez-vous, s'il vous plaît, me partager votre nom et vos coordonnées (adresse e-mail et/ou numéro de téléphone) pour faciliter la suivie ?",
     "Pour faciliter la prise en charge par mon responsable, merci de me communiquer votre nom ainsi que vos coordonnées (adresse e-mail et/ou numéro de téléphone).",
-    "Je vais transmettre votre demande à mon responsable ; pourriez-vous d’abord m’indiquer votre nom et vos coordonnées (adresse e-mail et/ou numéro de téléphone) ?"
+    "Je vais transmettre votre demande à mon responsable ; pourriez-vous d'abord m'indiquer votre nom et vos coordonnées (adresse e-mail et/ou numéro de téléphone) ?"
 ]
 
 
@@ -484,12 +484,27 @@ async def process_file(upload_file: UploadFile, max_size_mb: int, allowed_types:
         upload_file.file.close()
 
     base64_image = encode_image(dest_path)
+    image_prompt = (
+"Décris uniquement ce qui est réellement visible dans l'image, sans rien inventer ni interpréter."
+"\n"
+"Format de réponse obligatoire :"
+"Image : [phrase courte qui résume la scène]"
+"- [détail concret 1]"
+"- [détail concret 2]"
+"- [détail concret 3]"
+"- [etc...]"
+"\n"
+"Règles :"
+"- Sois concis, précis et aussi exhaustif que possible."
+"- Décris seulement des éléments observables : objets, personnes, animaux, décor, couleurs, formes, positions, actions visibles, texte lisible, logos, nombre d'éléments, perspective/cadrage, etc."
+"- N'ajoute aucun commentaire, intention, émotion, opinion, ni information non directement visible."
+    )
     chat_completion = await image_model.chat.completions.create(
         messages=[
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Liste moi en détail ce que tu vois dans cette image. Sois concis, précis mais complet. Interdiction d'inventer et de donner des informations non présentes dans l'image."},
+                    {"type": "text", "text": image_prompt},
                     {
                         "type": "image_url",
                         "image_url": {
@@ -709,26 +724,27 @@ async def run_executor_agent(supabase,
                             exec_plan: Dict[str, Any],
                             user_language: str,
                             ) -> Dict[str, Any]:
-    exec_plan = dict(exec_plan or {})
-    exec_instruct = exec_plan["exec_inst"] 
-    if TOOL_SEND_EMAIL in [d.name for d in exec_plan['tools_to_call']]  :
-        list_contact = await load_intern_contact(supabase, company_id)
-        instruct_email_list = extract_emails(exec_instruct) or []
-        intern_email_list = list(map(itemgetter("email"), list_contact)) #extract_intern_emails(str(list_contact)) or []
-        verif, list_intrus = check_difference(instruct_email_list, intern_email_list)         # verification des emails authorisés 
-        if verif :
-            exec_instruct = strip_emails(exec_instruct) + f"\n\n### LISTE DES CONTACTS INTERNES ###\n\nVoici la liste des contacts privés dans votre entreprise. Ne l'utilisez que si vous en avez besoin, comme contacter un responsable ou envoyer un email par exemple. Choisissez bien convenablement la bonne personne en fonction de son poste et de sa description de poste. Attention, le rôle peut ne pas correspondre exactement à ce que vous cherchez. Se référer plutôt à la descritption du poste pour le choix de la meilleure personne : \n\n<list_contact>\n"+ str(list_contact) +"\n</list_contact>\n\n"
-        else :
-            denied_answer = f"Je suis désolé, je me rends compte que je ne suis pas autorisé à envoyer l'email au destinataire : {', '.join(intru for intru in list_intrus)}."
-            if user_language.lower() in ["malagasy", "malgache", "mg"]:
-                target_denied_answer = f"Miala tsiny tompoko, tsy manana alàlana handefa mailaka amin'ity na ireto aho: {', '.join(intru for intru in list_intrus)}."
-            else:
-                target_denied_answer = denied_answer
-            await save_supabase_message(supabase, session_id, "assistant", denied_answer, target_denied_answer, user_language)
-            return target_denied_answer
-
-    out = await onexia_executor(exec_instruct)
     try :
+        exec_plan = dict(exec_plan or {})
+        exec_instruct = exec_plan["exec_inst"] 
+        if TOOL_SEND_EMAIL in [d.name for d in exec_plan['tools_to_call']]  :
+            list_contact = await load_intern_contact(supabase, company_id)
+            instruct_email_list = extract_emails(exec_instruct) or []
+            intern_email_list = list(map(itemgetter("email"), list_contact)) #extract_intern_emails(str(list_contact)) or []
+            verif, list_intrus = check_difference(instruct_email_list, intern_email_list)         # verification des emails authorisés 
+            if verif :
+                exec_instruct = strip_emails(exec_instruct) + f"\n\n### LISTE DES CONTACTS INTERNES ###\n\nVoici la liste des contacts privés dans votre entreprise. Ne l'utilisez que si vous en avez besoin, comme contacter un responsable ou envoyer un email par exemple. Choisissez bien convenablement la bonne personne en fonction de son poste et de sa description de poste. Attention, le rôle peut ne pas correspondre exactement à ce que vous cherchez. Se référer plutôt à la descritption du poste pour le choix de la meilleure personne : \n\n<list_contact>\n"+ str(list_contact) +"\n</list_contact>\n\n"
+            else :
+                denied_answer = f"Je suis désolé, je me rends compte que je ne suis pas autorisé à envoyer l'email au destinataire : {', '.join(intru for intru in list_intrus)}."
+                if user_language.lower() in ["malagasy", "malgache", "mg"]:
+                    target_denied_answer = f"Miala tsiny tompoko, tsy manana alàlana handefa mailaka amin'ity na ireto aho: {', '.join(intru for intru in list_intrus)}."
+                else:
+                    target_denied_answer = denied_answer
+                await save_supabase_message(supabase, session_id, "assistant", denied_answer, target_denied_answer, user_language)
+                return target_denied_answer
+        
+        out = await onexia_executor(exec_instruct)
+
         out = json.loads(out) 
         return_reponse = out['message'] + out['ask'] if  out['ask'].lower() not in ["null", "none",""] else out['message']
         target_return_reponse = return_reponse if user_language.lower() not in ["malagasy", "malgache", "mg"] else await sanitize_translate(return_reponse, "fr", "mg")
@@ -736,7 +752,8 @@ async def run_executor_agent(supabase,
             await save_supabase_message(supabase, session_id, "assistant", return_reponse, target_return_reponse, user_language) # save assistant message
         return target_return_reponse
     except Exception as e:
-        return "Je suis désolé, j'ai subi une petite déconnexion. Pourriez-vous répéter svp ?"
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la génération de la réponse: {str(e)}")
+        #return "Je suis désolé, j'ai subi une petite déconnexion. Pourriez-vous répéter svp ?"
 
 
 async def escalate_to_humans(conv_history, spbase, session_id, request, langue="Français"):

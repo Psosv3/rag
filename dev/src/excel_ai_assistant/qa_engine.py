@@ -9,7 +9,7 @@ from .analyzer import WorkbookAnalyzer
 from .config import AppConfig
 from .excel_loader import ExcelWorkbookLoader
 from .llm_client import LLMClient, OpenAILLMClient
-
+from .summary import process_workbooks_concurrently
 
 @dataclass
 class ExcelQASystem:
@@ -49,15 +49,12 @@ class ExcelQASystem:
         # 1) Load + summarize the workbook
         workbook_summary = self.loader.load_summary(source = source,
                                                     file_id = file_id,
-                                                    max_sample_rows_per_sheet = self.config.analyzer.max_sample_rows_per_sheet,
                                                     )
-        print(f"\n********\nDEBUG in qa_engine.py Workbook summary built. Sheets included:\n{workbook_summary}\n########")
         # 2) Build the textual prompt that will be sent to the LLM
-        prompt = self.analyzer.build_llm_prompt(workbook = workbook_summary,
-                                                question = question)
-        print(f"\n********\nDEBUG in qa_engine.py Prompt built: \n{len(prompt)}\n########")
-        # 3) Call the LLM with that prompt
-        answer = self.llm_client.generate(prompt,
-                                          system_prompt = self.analyzer.default_system_prompt)
-        
-        return answer
+        prompt = self.analyzer.build_llm_prompt(workbook = workbook_summary)
+        return prompt
+        # 3) Enhance the prompt for readability (optional) : --> TODO
+        # answer = self.llm_client.generate(prompt,
+        #                                   system_prompt = self.analyzer.default_system_prompt)
+        # return answer                                                                                              
+         

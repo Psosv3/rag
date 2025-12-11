@@ -135,7 +135,7 @@ async def build_index(company_id: str, data_dir: str = "data", update_resume : b
         company_synth = None
         if update_resume:
             full_docs = "\n--------\n".join(docs)
-            try:
+            try: 
                 company_synth = await company_resume(full_docs)
             except :
                 company_synth = f"Veuillez déduire le résumé de l'entreprise à partir des contextes fournis ci-dessous."
@@ -147,9 +147,9 @@ async def build_index(company_id: str, data_dir: str = "data", update_resume : b
             else:
                 raise ValueError(f"Aucun document trouvé pour l'entreprise {company_id}")
         
-        # Créer le vectorstore avec persistance
+        #Créer le vectorstore avec persistance
         vectordb = create_vectorstore(split_docs, persist_dir=company_index_dir)
-        return vectordb, company_synth
+        return vectordb, company_synth 
     
     except Exception as e:
         if HTTPException:

@@ -145,7 +145,7 @@ def process_excel_file(excel_path) -> None:
     qa_system = ExcelQASystem.with_openai(config=config)
     question = (
 "Tu es expert en lecture et compréhension de contenu Excel."
-"Fournis une synthèse détaillée des données contenues dans ce fichier Excel."
+"Fournis un texte détaillant les données contenues dans ce fichier Excel."
 "N'omet aucun élément. Interdit de faire des suppositions ou d'inventer des informations."
 "Ne donne jamais ton avis."
 "Réponds toujours en Français."

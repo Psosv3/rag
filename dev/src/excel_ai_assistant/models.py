@@ -44,51 +44,42 @@ class SheetSummary:
     cross_sheet_references: List[str] = field(default_factory=list)
     labeled_values: List[LabeledValue] = field(default_factory=list)
 
-    def to_text_block(self, max_sample_rows: int = 5, max_labeled_values: int = 15) -> str:
+    def to_text_block(self) -> str:
         """Convert summary to a compact text block for LLM context."""
-        sample_rows = self.sample_rows[:max_sample_rows]
-        labeled_values = self.labeled_values[:max_labeled_values]
+        sample_rows = self.sample_rows
+        labeled_values = self.labeled_values
 
         lines: List[str] = [
             f"Sheet: {self.name}",
             f"Size: {self.n_rows} rows x {self.n_cols} cols",
         ]
 
-        if self.headers:
-            lines.append(f"Headers: {', '.join(self.headers)}")
-
         if sample_rows:
-            lines.append("Sample rows:")
+            lines.append("All non-empty rows:")
             for i, row in enumerate(sample_rows, start=1):
-                row_str = ", ".join(f"{k}={v!r}" for k, v in row.items())
-                lines.append(f"  Row {i}: {row_str}")
-
-        if labeled_values:
-            lines.append("Key labeled values (label -> value):")
-            for lv in labeled_values:
-                lines.append(
-                    f"  [{lv.orientation}] "
-                    f"{self.name}!{lv.label_address}={lv.label!r} "
-                    f"-> {self.name}!{lv.value_address}={lv.value!r}"
-                )
+                row_str = ", ".join(f"{k}={str(v)!r}" for k, v in row.items() if v is not None)
+                if row_str:
+                    lines.append(f"  Row {i}: {row_str}")
 
         if self.cross_sheet_references:
             refs_str = ", ".join(sorted(set(self.cross_sheet_references)))
             lines.append(f"Cross-sheet references: {refs_str}")
 
-        if self.formula_cells:
-            formulas_preview: List[str] = []
-            for cell in self.formula_cells[:5]:
-                if not cell.formula:
-                    continue
-                desc = f"{cell.sheet_name}!{cell.address}: {cell.formula}"
-                if cell.value is not None:
-                    desc += f" (value={cell.value!r})"
-                formulas_preview.append(desc)
+        # if self.formula_cells:
+        #     formulas_preview: List[str] = []
+        #     for cell in self.formula_cells[:5]:
+        #         if not cell.formula:
+        #             continue
+        #         desc = f"{cell.sheet_name}!{cell.address}: {cell.formula}"
+        #         if cell.value is not None:
+        #             desc += f" (value={cell.value!r})"
+        #         formulas_preview.append(desc)
 
-            if formulas_preview:
-                lines.append("Example formulas:")
-                lines.extend(f"  {f}" for f in formulas_preview)
+        #     if formulas_preview:
+        #         lines.append("Example formulas:")
+        #         lines.extend(f"  {f}" for f in formulas_preview)
+
+        lines.append(f"\n\n<!--|||SECTION|||-->")
 
         return "\n".join(lines)
 

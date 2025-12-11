@@ -173,7 +173,6 @@ async def upload_file(file: UploadFile = File(...),
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Erreur lors de l'enregistrement du fichier Excel/CSV: {str(e)}")
 
-
     return {"message": f"file {safe_name} uploaded",
             "company_id": company_id,
             "file": safe_name
@@ -265,7 +264,7 @@ async def ask_question_public(req: Request,
                     raise HTTPException(status_code=400 ,detail="Seuls les fichiers images PNG, JPG et WEBP sont acceptés.")
                 try:
                     content_file = await process_file(request.file, settings.MAX_UPLOAD_MB, settings.ALLOWED_FILES_TYPES)
-                    user_question = f"L'utilisateur a envoyé un fichier externe {request.file.content_type}. Voici ce qu'il contient:\n\n<CONTENU_IMAGE> :\n{content_file}\n</CONTENU_IMAGE>. \n\nVoici le message de l'utilisateur : \n{user_text_question}"
+                    user_question = f"L'utilisateur a envoyé un fichier externe {request.file.content_type}. Voici ce qu'il contient:\n\n<CONTENU_IMAGE> :\n{content_file}\n</CONTENU_IMAGE>. \n\nVoici le message de l'utilisateur en lien avec le [CONTENU_IMAGE] : \n{user_text_question}"
                 except Exception as e:
                     print(f"***** ERREUR process_file: {e}")
                     await save_supabase_message(spbase, session_id, "user", user_text_question, original_question, user_language)
@@ -398,7 +397,7 @@ async def ask_question_public(req: Request,
                     "session_id": session_id,
                     "external_user_id": request.external_user_id,
                 }
-                message_data = await save_supabase_message(spbase, session_id, "assistant", answer)
+                message_data = await save_supabase_message(spbase, session_id, "assistant", answer_fr, answer, request.langue)
                 await log_audit(redis, {"type": "planner_block", "session_id": session_id, "company_id": request.company_id})
                 payload["message_id"] = message_data.get("message_id")
                 yield sse_data(payload)
@@ -473,7 +472,10 @@ async def ask_question_public(req: Request,
                 yield sse_data(await respond_and_log(temp_resp, request.langue, company_signature))
 
                 async def _run_executor():
-                    return await run_executor_agent(spbase, session_id, request.company_id, planner_out, user_language)
+                    try:
+                        return await run_executor_agent(spbase, session_id, request.company_id, planner_out, user_language)
+                    except Exception as e:
+                        raise HTTPException(status_code=500, detail=f"Erreur lors de l'execution': {str(e)}")
 
                 task = asyncio.create_task(_run_executor())
 
@@ -522,8 +524,23 @@ async def ask_question_public(req: Request,
             yield sse_data(await respond_and_log(controlled_fallback_response(lang, request.langue), request.langue, company_signature))
             return
 
-        except Exception as e:
+        except BaseException as e:
             await log_audit(redis, {"type": "error", "at": "ask_public", "error": str(e)})
+            await create_notification(spbase=spbase,
+                                      company_id=request.company_id,
+                                      notification_type="manual_response_required",
+                                      title="Difficulté rencontrée",
+                                      content=f"Onexia a recontré une difficulté technique. Dernière message du client: {user_question[:100]}...",
+                                      session_id=session_id,
+                                      priority="high",
+                                      metadata={
+                                          "reason": "escalation_completed",
+                                          "last_user_message": user_question[:200],
+                                          "escalation_time": datetime.now().isoformat()
+                                          },
+                                          action_url=f"/dashboard/chat?session={session_id}",
+                                          action_label="Répondre maintenant"
+            )
             raise HTTPException(status_code=500, detail=f"Erreur lors de la génération de la réponse: {str(e)}")
 
     # 3) Single-generator SSE with heartbeat on timeout
