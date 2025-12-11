@@ -9,7 +9,6 @@ from .analyzer import WorkbookAnalyzer
 from .config import AppConfig
 from .excel_loader import ExcelWorkbookLoader
 from .llm_client import LLMClient, OpenAILLMClient
-from .summary import process_workbooks_concurrently
 
 @dataclass
 class ExcelQASystem:
