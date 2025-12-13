@@ -66,6 +66,7 @@ from .app_utils import (
     build_chat_messages,
     stop_chatbot,
     process_file,
+    transcribe_audio_to_text,
     )
 # rag & models
 from rag.rag import get_rag_context, rebuild_company_index, build_index, get_company_data_dir, get_company_stats, clear_company_cache, rewrite_rag_augmentor
@@ -183,13 +184,14 @@ async def express_build_index(current_user: AuthUser = Depends(get_current_user)
 
 @app.post("/ask_public/")
 async def ask_question_public(req: Request,
-                              question: str = Form(...),
                               company_id: str = Form(...),
+                              question: Optional[str] = Form(...),
                               session_id: Optional[str] = Form(None),
                               external_user_id: Optional[str] = Form(None),
                               langue: str = Form('français'),
                               messenger: Optional[str] = Form(None),
                               file: Optional[UploadFile] = File(None),
+                              audio: Optional[UploadFile] = File(None),
                               spbase: AsyncClient = Depends(get_supabase),
                               redis: Redis = Depends(get_redis),
                               ):
@@ -201,6 +203,7 @@ async def ask_question_public(req: Request,
                                     langue=langue,
                                     messenger=messenger,
                                     file=file,
+                                    audio=audio,
                                     )
 
     # 0) Resolve/create session
@@ -210,7 +213,7 @@ async def ask_question_public(req: Request,
     session_id = session["session_id"]
 
     # 1) a) validate question length
-    is_rejected, original_question = validate_quest_length(request.question) # check length abuse
+    is_rejected, original_question = validate_quest_length(request.question) if request.question else (False, "")
     if is_rejected : 
         return sse_data({"answer": "Owh! Vous êtes bien bavard. Je suis désolé, je ne peux accepter que les questions à 1000 caractères maximum.",
                         "company_id": request.company_id,
@@ -219,6 +222,13 @@ async def ask_question_public(req: Request,
                         })        
     # 1) b) sanitize_malagasy_sentence, dict_abreviation_mg
     user_language = request.langue.lower() if request.langue else None
+
+    if request.audio is not None:
+        # Save uploaded audio to a temporary file
+        temp_audio_path = DATA_DIR / f"temp_audio_{session_id}{Path(audio.filename).suffix}"
+        original_question = await transcribe_audio_to_text(temp_audio_path)
+        temp_audio_path.unlink(missing_ok=True)
+         
     if user_language in ("malgache", "malagasy","mg"):
         user_text_question = await sanitize_translate(original_question.lower(), "mg", "fr")
     else:

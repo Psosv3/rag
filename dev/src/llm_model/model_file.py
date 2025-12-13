@@ -154,3 +154,4 @@ def _delete_saved_image(path: Path) -> None:
         except Exception as exc:
             logger.exception("Failed to cleanup directory %s: %s", parent, exc)
             break
+

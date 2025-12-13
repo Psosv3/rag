@@ -34,6 +34,11 @@ image_model = AsyncGroq(api_key=groq_api_key)
 image_core_model = "meta-llama/llama-4-maverick-17b-128e-instruct" #"meta-llama/llama-4-scout-17b-16e-instruct"
 
 ###
+voice_model = AsyncGroq(api_key=groq_api_key)
+voice_core_model = "whisper-large-v3-turbo"
+
+
+###
 executor_model = OpenAIChatCompletionsModel( 
     model = "openai/gpt-oss-20b",
     openai_client = AgentsAsyncOpenAI (base_url="https://api.groq.com/openai/v1", api_key=groq_api_key),

@@ -29,7 +29,7 @@ import jwt
 # Models
 from llm_model.onexia import onexia_executor, onexia_escalator
 from llm_model.model_file import _save_upload_file_streaming, generate_image_path, _delete_saved_image
-from llm_model.model_server import image_model, image_core_model
+from llm_model.model_server import image_model, image_core_model, voice_core_model, voice_model
 # Rag
 from rag.rag import rewrite_rag_augmentor
 # Utils
@@ -68,6 +68,7 @@ class PublicQuestionRequest(BaseModel):
     langue: Optional[str] = None
     messenger: Optional[bool] = False
     file: Optional[UploadFile] = None
+    audio: Optional[UploadFile] = None
 
 class FeedbackRequest(BaseModel):
     session_id: str
@@ -460,6 +461,9 @@ def validate_quest_length(question: str, max_len: int = _DEFAULT_Q_MAX) -> str:
     cleaned = " ".join(question.strip().split())
     return (len(cleaned) > max_len, cleaned)
 
+
+###################################################### files processing ######################################################
+
 async def process_file(upload_file: UploadFile, max_size_mb: int, allowed_types: Optional[dict]) -> str:
     ext = Path(upload_file.filename).suffix.lower()
     mime_guess, _ = mimetypes.guess_type(upload_file.filename)
@@ -503,6 +507,32 @@ async def process_file(upload_file: UploadFile, max_size_mb: int, allowed_types:
     content_file = chat_completion.choices[0].message.content
     _delete_saved_image(dest_path)
     return content_file
+
+
+async def transcribe_audio_to_text(filepath, audio, client=voice_model, core_model=voice_core_model) -> str:
+    try:
+        # Save uploaded audio to a temporary file
+        with filepath.open("wb") as f:
+            while True:
+                chunk = await audio.read(1024 * 1024)  # 1MB chunks
+                if not chunk:
+                    break
+                f.write(chunk)
+
+        await audio.close()
+
+        with open(filepath, "rb") as file:
+            transcription = await client.audio.transcriptions.create(file=(filepath, file.read()),
+                                                                     model=core_model,
+                                                                     temperature=0,
+                                                                     response_format="verbose_json",
+                                                                     )
+            return str(transcription.text).strip()
+    except Exception as e:  
+            raise HTTPException(status_code=400, detail=f"Audio transcription failed: {str(e)}")
+
+
+###################################################### Conversation helpers ######################################################
 
 async def prep_input_embed(conv_history: List[dict], user_question: str, len_hist: int = 3) -> str:
     """
