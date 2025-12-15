@@ -226,7 +226,7 @@ async def ask_question_public(req: Request,
     if request.audio is not None:
         # Save uploaded audio to a temporary file
         temp_audio_path = DATA_DIR / f"temp_audio_{session_id}{Path(audio.filename).suffix}"
-        original_question = await transcribe_audio_to_text(temp_audio_path)
+        original_question = await transcribe_audio_to_text(temp_audio_path, request.audio)
         temp_audio_path.unlink(missing_ok=True)
          
     if user_language in ("malgache", "malagasy","mg"):
