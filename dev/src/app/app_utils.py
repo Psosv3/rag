@@ -529,7 +529,7 @@ async def transcribe_audio_to_text(filepath, audio, client=voice_model, core_mod
                                                                      )
             return str(transcription.text).strip()
     except Exception as e:  
-            raise HTTPException(status_code=400, detail=f"Audio transcription failed: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Audio transcription failed: {str(e)}")
 
 
 ###################################################### Conversation helpers ######################################################
