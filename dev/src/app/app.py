@@ -1010,42 +1010,47 @@ async def listen_messages(
     Endpoint SSE pour écouter les nouveaux messages d'une session en temps réel
     """
     async def event_stream():
-        # Récupérer le dernier message_id connu pour ne pas renvoyer les anciens messages
+        # Garder un set de tous les message_ids déjà envoyés
         messages = await list_messages(spbase, session_id)
-        last_known_id = messages[-1].get("message_id") if messages else None
+        sent_message_ids = {msg.get("message_id") for msg in messages if msg.get("message_id")}
+        print(f"🔌 SSE Connection établie pour session {session_id[:8]}... ({len(sent_message_ids)} messages existants)")
         
         try:
+            heartbeat_counter = 0
             while True:
                 # Vérifier si le client est toujours connecté
                 if await req.is_disconnected():
+                    print(f"🔌 Client déconnecté pour session {session_id[:8]}...")
                     break
                 
-                # Récupérer les nouveaux messages
-                new_messages = await list_messages(spbase, session_id)
+                # Récupérer tous les messages actuels
+                current_messages = await list_messages(spbase, session_id)
                 
-                # Filtrer pour n'envoyer que les nouveaux messages
-                if last_known_id:
-                    new_messages = [m for m in new_messages if m.get("message_id") != last_known_id and 
-                                   m.get("created_at", "") > (messages[-1].get("created_at", "") if messages else "")]
-                
-                # Envoyer les nouveaux messages via SSE
-                for msg in new_messages:
-                    if msg.get("role") == "assistant":  # Envoyer uniquement les messages assistant
+                # Trouver les nouveaux messages (ceux qu'on n'a pas encore envoyés)
+                new_messages_found = False
+                for msg in current_messages:
+                    msg_id = msg.get("message_id")
+                    if msg_id and msg_id not in sent_message_ids and msg.get("role") == "assistant":
+                        # Nouveau message assistant détecté
+                        new_messages_found = True
+                        print(f"✉️ NOUVEAU message admin détecté: {msg_id[:8]}... - Envoi via SSE")
                         yield sse_data({
-                            "message_id": msg.get("message_id"),
+                            "message_id": msg_id,
                             "content": msg.get("content"),
                             "role": msg.get("role"),
                             "created_at": msg.get("created_at")
                         })
-                        last_known_id = msg.get("message_id")
+                        sent_message_ids.add(msg_id)
+                        print(f"✅ Message {msg_id[:8]}... envoyé avec succès")
                 
-                # Mettre à jour la liste des messages
-                if new_messages:
-                    messages = await list_messages(spbase, session_id)
+                # Attendre un peu avant de vérifier à nouveau
+                await asyncio.sleep(1)
                 
-                # Envoyer un heartbeat toutes les 15 secondes
-                await asyncio.sleep(2)
-                yield sse_data({"event": "heartbeat"})
+                # Envoyer un heartbeat périodiquement (tous les 5 checks)
+                heartbeat_counter += 1
+                if heartbeat_counter % 5 == 0:
+                    yield sse_data({"event": "heartbeat"})
+                    print(f"💓 Heartbeat envoyé pour session {session_id[:8]}...")
                 
         except asyncio.CancelledError:
             pass

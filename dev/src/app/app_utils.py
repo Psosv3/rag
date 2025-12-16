@@ -383,7 +383,7 @@ async def get_or_write_company_resume(spbase: AsyncClient, company_id: str, acti
 
 async def list_messages(spbase: AsyncClient, session_id: str, limit: int = 200) -> List[dict]:
     res = await spbase.table(TABLE_MESSAGE)\
-        .select("role,content,created_at")\
+        .select("message_id,role,content,created_at")\
         .eq("session_id", session_id)\
         .order("created_at", desc=False)\
         .limit(limit)\
