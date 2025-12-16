@@ -956,6 +956,113 @@ async def submit_feedback(
             detail=f"Erreur lors de l'enregistrement du feedback: {str(e)}"
         )
 
+@app.post("/send_manual_message/")
+async def send_manual_message(
+    session_id: str = Form(...),
+    content: str = Form(...),
+    company_id: str = Form(...),
+    langue: str = Form('français'),
+    spbase: AsyncClient = Depends(get_supabase),
+    current_user: AuthUser = Depends(get_current_user)
+):
+    """
+    Endpoint pour envoyer un message manuel depuis le dashboard admin
+    """
+    try:
+        # Vérifier que l'admin appartient à la même company
+        if current_user.company_id != company_id:
+            raise HTTPException(status_code=403, detail="Accès refusé à cette entreprise")
+        
+        # Sauvegarder le message dans Supabase
+        message_data = await save_supabase_message(
+            spbase=spbase,
+            session_id=session_id,
+            role="assistant",
+            content=content,
+            original_content=content,
+            user_language=langue,
+            manual_response=True
+        )
+        
+        return {
+            "success": True,
+            "message": "Message envoyé avec succès",
+            "message_id": message_data.get("message_id"),
+            "session_id": session_id,
+            "content": content
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de l'envoi du message: {str(e)}"
+        )
+
+
+@app.get("/listen_messages/{session_id}")
+async def listen_messages(
+    session_id: str,
+    req: Request,
+    spbase: AsyncClient = Depends(get_supabase)
+):
+    """
+    Endpoint SSE pour écouter les nouveaux messages d'une session en temps réel
+    """
+    async def event_stream():
+        # Récupérer le dernier message_id connu pour ne pas renvoyer les anciens messages
+        messages = await list_messages(spbase, session_id)
+        last_known_id = messages[-1].get("message_id") if messages else None
+        
+        try:
+            while True:
+                # Vérifier si le client est toujours connecté
+                if await req.is_disconnected():
+                    break
+                
+                # Récupérer les nouveaux messages
+                new_messages = await list_messages(spbase, session_id)
+                
+                # Filtrer pour n'envoyer que les nouveaux messages
+                if last_known_id:
+                    new_messages = [m for m in new_messages if m.get("message_id") != last_known_id and 
+                                   m.get("created_at", "") > (messages[-1].get("created_at", "") if messages else "")]
+                
+                # Envoyer les nouveaux messages via SSE
+                for msg in new_messages:
+                    if msg.get("role") == "assistant":  # Envoyer uniquement les messages assistant
+                        yield sse_data({
+                            "message_id": msg.get("message_id"),
+                            "content": msg.get("content"),
+                            "role": msg.get("role"),
+                            "created_at": msg.get("created_at")
+                        })
+                        last_known_id = msg.get("message_id")
+                
+                # Mettre à jour la liste des messages
+                if new_messages:
+                    messages = await list_messages(spbase, session_id)
+                
+                # Envoyer un heartbeat toutes les 15 secondes
+                await asyncio.sleep(2)
+                yield sse_data({"event": "heartbeat"})
+                
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            yield sse_data({"error": str(e)})
+    
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 @app.get("/////////")
 async def root():
     return {
