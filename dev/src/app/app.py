@@ -5,7 +5,7 @@ import random
 import mimetypes
 import contextlib
 from pathlib import Path
-from typing import Optional, AsyncGenerator
+from typing import Optional, AsyncGenerator, List
 from contextlib import asynccontextmanager
 from datetime import datetime
 import asyncio
@@ -71,6 +71,8 @@ from .app_utils import (
 # rag & models
 from rag.rag import get_rag_context, rebuild_company_index, build_index, get_company_data_dir, get_company_stats, clear_company_cache, rewrite_rag_augmentor
 from llm_model.onexia import onexia_planner, PlannerOutput, planner_syst_instructions
+# security
+from security.security import decrypt
 
 load_dotenv()
 
@@ -998,6 +1000,34 @@ async def send_manual_message(
             status_code=500,
             detail=f"Erreur lors de l'envoi du message: {str(e)}"
         )
+
+
+@app.post("/decrypt_messages/")
+async def decrypt_messages_public(request: dict):
+    """
+    Décrypte les messages pour le chatbot public (sans authentification)
+    """
+    try:
+        messages = request.get("messages", [])
+        if not isinstance(messages, list):
+            raise HTTPException(status_code=400, detail="Format invalide: messages doit être une liste")
+        
+        decrypted = []
+        for msg in messages:
+            try:
+                decrypted_content = decrypt(msg.get("content", ""))
+                decrypted.append({
+                    **msg,
+                    "content": decrypted_content
+                })
+            except Exception as e:
+                print(f"Erreur décryptage message {msg.get('message_id', 'unknown')}: {e}")
+                # En cas d'erreur, retourner le message original
+                decrypted.append(msg)
+        
+        return {"messages": decrypted}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors du décryptage: {str(e)}")
 
 
 @app.get("/listen_messages/{session_id}")
