@@ -5,7 +5,7 @@ import random
 import mimetypes
 import contextlib
 from pathlib import Path
-from typing import Optional, AsyncGenerator
+from typing import Optional, AsyncGenerator, List
 from contextlib import asynccontextmanager
 from datetime import datetime
 import asyncio
@@ -71,6 +71,8 @@ from .app_utils import (
 # rag & models
 from rag.rag import get_rag_context, rebuild_company_index, build_index, get_company_data_dir, get_company_stats, clear_company_cache, rewrite_rag_augmentor
 from llm_model.onexia import onexia_planner, PlannerOutput, planner_syst_instructions
+# security
+from security.security import decrypt
 
 load_dotenv()
 
@@ -954,6 +956,146 @@ async def submit_feedback(
             status_code=500,
             detail=f"Erreur lors de l'enregistrement du feedback: {str(e)}"
         )
+
+@app.post("/send_manual_message/")
+async def send_manual_message(
+    session_id: str = Form(...),
+    content: str = Form(...),
+    company_id: str = Form(...),
+    langue: str = Form('français'),
+    spbase: AsyncClient = Depends(get_supabase),
+    current_user: AuthUser = Depends(get_current_user)
+):
+    """
+    Endpoint pour envoyer un message manuel depuis le dashboard admin
+    """
+    try:
+        # Vérifier que l'admin appartient à la même company
+        if current_user.company_id != company_id:
+            raise HTTPException(status_code=403, detail="Accès refusé à cette entreprise")
+        
+        # Sauvegarder le message dans Supabase
+        message_data = await save_supabase_message(
+            spbase=spbase,
+            session_id=session_id,
+            role="assistant",
+            content=content,
+            original_content=content,
+            user_language=langue,
+            manual_response=True
+        )
+        
+        return {
+            "success": True,
+            "message": "Message envoyé avec succès",
+            "message_id": message_data.get("message_id"),
+            "session_id": session_id,
+            "content": content
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de l'envoi du message: {str(e)}"
+        )
+
+
+@app.post("/decrypt_messages/")
+async def decrypt_messages_public(request: dict):
+    """
+    Décrypte les messages pour le chatbot public (sans authentification)
+    """
+    try:
+        messages = request.get("messages", [])
+        if not isinstance(messages, list):
+            raise HTTPException(status_code=400, detail="Format invalide: messages doit être une liste")
+        
+        decrypted = []
+        for msg in messages:
+            try:
+                decrypted_content = decrypt(msg.get("content", ""))
+                decrypted.append({
+                    **msg,
+                    "content": decrypted_content
+                })
+            except Exception as e:
+                print(f"Erreur décryptage message {msg.get('message_id', 'unknown')}: {e}")
+                # En cas d'erreur, retourner le message original
+                decrypted.append(msg)
+        
+        return {"messages": decrypted}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors du décryptage: {str(e)}")
+
+
+@app.get("/listen_messages/{session_id}")
+async def listen_messages(
+    session_id: str,
+    req: Request,
+    spbase: AsyncClient = Depends(get_supabase)
+):
+    """
+    Endpoint SSE pour écouter les nouveaux messages d'une session en temps réel
+    """
+    async def event_stream():
+        # Garder un set de tous les message_ids déjà envoyés
+        messages = await list_messages(spbase, session_id)
+        sent_message_ids = {msg.get("message_id") for msg in messages if msg.get("message_id")}
+        print(f"🔌 SSE Connection établie pour session {session_id[:8]}... ({len(sent_message_ids)} messages existants)")
+        
+        try:
+            heartbeat_counter = 0
+            while True:
+                # Vérifier si le client est toujours connecté
+                if await req.is_disconnected():
+                    print(f"🔌 Client déconnecté pour session {session_id[:8]}...")
+                    break
+                
+                # Récupérer tous les messages actuels
+                current_messages = await list_messages(spbase, session_id)
+                
+                # Trouver les nouveaux messages (ceux qu'on n'a pas encore envoyés)
+                new_messages_found = False
+                for msg in current_messages:
+                    msg_id = msg.get("message_id")
+                    if msg_id and msg_id not in sent_message_ids and msg.get("role") == "assistant":
+                        # Nouveau message assistant détecté
+                        new_messages_found = True
+                        print(f"✉️ NOUVEAU message admin détecté: {msg_id[:8]}... - Envoi via SSE")
+                        yield sse_data({
+                            "message_id": msg_id,
+                            "content": msg.get("content"),
+                            "role": msg.get("role"),
+                            "created_at": msg.get("created_at")
+                        })
+                        sent_message_ids.add(msg_id)
+                        print(f"✅ Message {msg_id[:8]}... envoyé avec succès")
+                
+                # Attendre un peu avant de vérifier à nouveau
+                await asyncio.sleep(1)
+                
+                # Envoyer un heartbeat périodiquement (tous les 5 checks)
+                heartbeat_counter += 1
+                if heartbeat_counter % 5 == 0:
+                    yield sse_data({"event": "heartbeat"})
+                    print(f"💓 Heartbeat envoyé pour session {session_id[:8]}...")
+                
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            yield sse_data({"error": str(e)})
+    
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
 
 @app.get("/////////")
 async def root():
