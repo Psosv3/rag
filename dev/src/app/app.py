@@ -222,11 +222,11 @@ async def ask_question_public(req: Request,
                         })        
     # 1) b) sanitize_malagasy_sentence, dict_abreviation_mg
     user_language = request.langue.lower() if request.langue else None
-
     if request.audio is not None:
         # Save uploaded audio to a temporary file
         temp_audio_path = DATA_DIR / f"temp_audio_{session_id}{Path(audio.filename).suffix}"
-        original_question = await transcribe_audio_to_text(temp_audio_path, request.audio)
+        audio_bytes = await request.audio.read()
+        original_question = await transcribe_audio_to_text(str(temp_audio_path), audio_bytes)
         temp_audio_path.unlink(missing_ok=True)
          
     if user_language in ("malgache", "malagasy","mg"):

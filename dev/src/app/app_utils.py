@@ -470,13 +470,13 @@ async def process_file(upload_file: UploadFile, max_size_mb: int, allowed_types:
     mime_hint = (mime_guess or upload_file.content_type or "").lower()
 
     if upload_file.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail="Unsupported image type")
+        raise HTTPException(status_code=500, detail="Unsupported image type")
     if (ext == ".jpg" or ext == ".jpeg") and "jpeg" not in mime_hint: # Make sure the extension and MIME type agree
-        raise HTTPException(status_code=400, detail="MIME type mismatch for jpeg/jpg")
+        raise HTTPException(status_code=500, detail="MIME type mismatch for jpeg/jpg")
     if ext == ".png" and "png" not in mime_hint:
-        raise HTTPException(status_code=400, detail="MIME type mismatch for png")
+        raise HTTPException(status_code=500, detail="MIME type mismatch for png")
     if ext == ".webp" and "webp" not in mime_hint:
-        raise HTTPException(status_code=400, detail="MIME type mismatch for webp")
+        raise HTTPException(status_code=500, detail="MIME type mismatch for webp")
     
     dest_path = generate_image_path(upload_file.content_type, allowed_types)
     # Offload blocking file I/O to threadpool for high concurrency.
@@ -511,25 +511,15 @@ async def process_file(upload_file: UploadFile, max_size_mb: int, allowed_types:
 
 async def transcribe_audio_to_text(filepath, audio, client=voice_model, core_model=voice_core_model) -> str:
     try:
-        # Save uploaded audio to a temporary file
-        with filepath.open("wb") as f:
-            while True:
-                chunk = await audio.read(1024 * 1024)  # 1MB chunks
-                if not chunk:
-                    break
-                f.write(chunk)
-
-        await audio.close()
-
-        with open(filepath, "rb") as file:
-            transcription = await client.audio.transcriptions.create(file=(filepath, file.read()),
-                                                                     model=core_model,
-                                                                     temperature=0,
-                                                                     response_format="verbose_json",
-                                                                     )
-            return str(transcription.text).strip()
+        transcription = await client.audio.transcriptions.create(file=(filepath, audio),
+                                                                    model=core_model,
+                                                                    temperature=0,
+                                                                    response_format="verbose_json",
+                                                                    )
+        return str(transcription.text).strip()
     except Exception as e:  
-            raise HTTPException(status_code=400, detail=f"Audio transcription failed: {str(e)}")
+            print(e)
+            raise HTTPException(status_code=500, detail=f"Audio transcription failed: {str(e)}")
 
 
 ###################################################### Conversation helpers ######################################################
@@ -841,7 +831,7 @@ async def safe_write_augmented_file(filename: str,
     """Reads an uploaded file, optionally augments its text via AugmentRAG, and saves it to destination."""
     ext = (Path(filename).suffix or "").lower()
     if ext not in {".pdf", ".docx"}:
-        raise HTTPException(status_code=400, detail=f"Unsupported file extension: {ext}")
+        raise HTTPException(status_code=500, detail=f"Unsupported file extension: {ext}")
 
     if not filecontent:
         raise HTTPException(status_code=422, detail="File empty or unreadable")
