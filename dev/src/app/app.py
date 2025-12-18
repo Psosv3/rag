@@ -59,7 +59,7 @@ from .app_utils import (
     is_ready_to_escalate,
     clear_all_cached_rag_docs,
     safe_write_augmented_file,
-    messenger_wait_human,
+    wait_human,
     prep_input_embed,
     get_or_write_company_resume,
     get_company_chatbot_signature,
@@ -243,9 +243,9 @@ async def ask_question_public(req: Request,
             # 0) General_Stop chatbot check or Ban check or Messenger_waiting_human
             general_manual_response = await stop_chatbot(spbase, request.company_id)
             ban = await is_banned(redis, request.company_id, session_id)
-            messenger_waiting_human = await messenger_wait_human(spbase, session_id)
+            waiting_human = await wait_human(spbase, session_id)
 
-            if general_manual_response or ban or messenger_waiting_human:
+            if general_manual_response or ban or waiting_human:
                 yield sse_data({
                     "answer": None,
                     "company_id": request.company_id,

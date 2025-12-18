@@ -394,14 +394,14 @@ async def list_messages(spbase: AsyncClient, session_id: str, limit: int = 200) 
     return rows
 
 
-async def messenger_wait_human(sp: AsyncClient, session_id: str) ->  bool:
+async def wait_human(sp: AsyncClient, session_id: str) ->  bool:
     """ Check si la session est une session messenger en attente d'un humain """
     res = await sp.table(TABLE_SESSION) \
-                  .select("manual_response,messenger") \
+                  .select("manual_response") \
                   .eq("session_id", session_id) \
                   .execute()
     data = res.data or []
-    if data and data[0].get("manual_response") == True and data[0].get("messenger") == True:
+    if data and data[0].get("manual_response") == True :
         return True
     return False
 
