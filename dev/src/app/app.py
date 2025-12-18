@@ -987,7 +987,7 @@ async def send_manual_message(
         
         return {
             "success": True,
-            "message": "Message envoyé avec succès",
+            "message": "Message envoyé avec succès!",
             "message_id": message_data.get("message_id"),
             "session_id": session_id,
             "content": content
